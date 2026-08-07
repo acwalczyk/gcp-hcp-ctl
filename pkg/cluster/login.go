@@ -9,12 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift-online/gcp-hcp-ctl/pkg/hyperfleet"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/kubeconfig"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	"github.com/spf13/cobra"
 )
-
-const hcAdapterName = "hc-adapter"
 
 type validateAccessFunc func(ctx context.Context, kubeconfigPath, contextName string) (string, error)
 
@@ -29,13 +27,13 @@ func newLoginCmd() *cobra.Command {
 	opts := &loginOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "login <cluster-name-or-id>",
+		Use:   "login <cluster-name>",
 		Short: "Log in to a hosted cluster",
 		Long: `Configures kubectl to access a hosted cluster by setting up a kubeconfig
 context with gcloud exec-based authentication.
 
-The command resolves the cluster's API endpoint from the HyperFleet API
-(via hc-adapter status data).`,
+The command resolves the cluster's API endpoint from the platform API server
+(via status.hostedClusterResult.apiEndpoint).`,
 		Example: `  # Login using the cluster name
   gcphcpctl cluster login my-cluster
 
@@ -97,9 +95,6 @@ func runLogin(ctx context.Context, cmd *cobra.Command, clusterRef string, opts *
 	return nil
 }
 
-// handleValidationFailure prints warnings, attempts to restore the previous
-// kubeconfig context, and returns a wrapped error. It is called when access
-// validation (kubectl auth whoami) fails after the kubeconfig has been updated.
 func handleValidationFailure(out io.Writer, valErr error, kubeconfigPath, contextName, previousContext string) error {
 	fmt.Fprintf(out, "\nWarning: access validation failed: %v\n", valErr)
 	fmt.Fprintf(out, "  The kubeconfig entry was written but cluster access could not be verified.\n")
@@ -115,73 +110,29 @@ func handleValidationFailure(out io.Writer, valErr error, kubeconfigPath, contex
 	return fmt.Errorf("access validation failed: %w", valErr)
 }
 
-// resolveClusterEndpoint queries the HyperFleet API for the cluster's API
-// server endpoint. It first resolves the cluster by name/ID, then fetches
-// the hc-adapter status data to extract the hostedCluster.apiEndpoint.
-// Returns (endpoint, clusterName, error).
-func resolveClusterEndpoint(ctx context.Context, client *hyperfleet.ClientWithResponses, clusterRef string) (string, string, error) {
-	cluster, err := resolveCluster(ctx, client, clusterRef)
+// resolveClusterEndpoint gets the cluster from the platform-api-server and
+// extracts the API endpoint from status.hostedClusterResult.apiEndpoint.
+func resolveClusterEndpoint(ctx context.Context, client *platformapi.Client, clusterRef string) (string, string, error) {
+	cluster, err := client.ResolveCluster(ctx, clusterRef)
 	if err != nil {
 		return "", "", err
 	}
 
-	clusterID := ptrStr(cluster.Id)
-	if clusterID == "" {
-		return "", cluster.Name, fmt.Errorf("cluster %q has no ID in the API response", cluster.Name)
-	}
 	clusterName := cluster.Name
 
-	endpoint, err := fetchHCAdapterEndpoint(ctx, client, clusterID)
-	if err != nil {
-		return "", clusterName, err
+	hcr := cluster.Status.HostedClusterResult
+	if hcr == nil || hcr.APIEndpoint == "" {
+		return "", clusterName, fmt.Errorf("no API endpoint found in cluster status (cluster may still be provisioning)")
 	}
-	return endpoint, clusterName, nil
+
+	parsed, err := url.Parse(hcr.APIEndpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return "", clusterName, fmt.Errorf("cluster returned invalid endpoint %q: must be a valid HTTPS URL", hcr.APIEndpoint)
+	}
+
+	return hcr.APIEndpoint, clusterName, nil
 }
 
-// fetchHCAdapterEndpoint uses the generated client to call
-// GET /clusters/{id}/statuses and extract the hc-adapter's apiEndpoint.
-func fetchHCAdapterEndpoint(ctx context.Context, client *hyperfleet.ClientWithResponses, clusterID string) (string, error) {
-	resp, err := client.GetClusterStatusesWithResponse(ctx, clusterID)
-	if err != nil {
-		return "", fmt.Errorf("fetching statuses: %w", err)
-	}
-	if resp.JSON200 == nil {
-		return "", fmt.Errorf("statuses endpoint returned %s", formatError(resp.HTTPResponse, resp.Body))
-	}
-
-	return extractEndpointFromStatuses(resp.JSON200.Items)
-}
-
-// extractEndpointFromStatuses finds the hc-adapter status and extracts
-// the hostedCluster.apiEndpoint from its data field.
-func extractEndpointFromStatuses(statuses []hyperfleet.AdapterStatus) (string, error) {
-	for _, item := range statuses {
-		if item.Adapter != hcAdapterName {
-			continue
-		}
-		if item.Data == nil {
-			continue
-		}
-		hc, ok := (*item.Data)["hostedCluster"].(map[string]any)
-		if !ok {
-			continue
-		}
-		endpoint, ok := hc["apiEndpoint"].(string)
-		if !ok {
-			continue
-		}
-		parsed, err := url.Parse(endpoint)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-			return "", fmt.Errorf("hc-adapter returned invalid endpoint %q: must be a valid HTTPS URL", endpoint)
-		}
-		return endpoint, nil
-	}
-
-	return "", fmt.Errorf("no API endpoint found in hc-adapter status data (cluster may still be provisioning)")
-}
-
-// validateAccess runs "kubectl auth whoami" against the given kubeconfig
-// context and returns the output.
 func validateAccess(ctx context.Context, kubeconfigPath, contextName string) (string, error) {
 	args := []string{"auth", "whoami"}
 	if kubeconfigPath != "" {
