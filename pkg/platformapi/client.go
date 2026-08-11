@@ -103,12 +103,10 @@ func (c *Client) Clusters() ClusterInterface {
 }
 
 // ClusterInterface defines operations on Cluster resources.
-// Namespace is transparent to the caller — list is cluster-scoped,
-// and mutating operations use the namespace from the resource metadata.
 type ClusterInterface interface {
 	Create(ctx context.Context, namespace string, cluster *gcpv1.Cluster) (*gcpv1.Cluster, error)
 	Get(ctx context.Context, namespace, name string) (*gcpv1.Cluster, error)
-	List(ctx context.Context) (*gcpv1.ClusterList, error)
+	List(ctx context.Context, namespace string) (*gcpv1.ClusterList, error)
 	Delete(ctx context.Context, namespace, name string) error
 }
 
@@ -138,10 +136,11 @@ func (c *clusterClient) Get(ctx context.Context, namespace, name string) (*gcpv1
 	return result, err
 }
 
-// List returns all clusters across all namespaces (cluster-scoped list).
-func (c *clusterClient) List(ctx context.Context) (*gcpv1.ClusterList, error) {
+// List returns clusters in the given namespace.
+func (c *clusterClient) List(ctx context.Context, namespace string) (*gcpv1.ClusterList, error) {
 	result := &gcpv1.ClusterList{}
 	err := c.restClient.Get().
+		Namespace(namespace).
 		Resource("clusters").
 		Do(ctx).
 		Into(result)

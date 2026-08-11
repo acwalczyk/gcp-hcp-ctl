@@ -18,7 +18,7 @@ func newListCmd() *cobra.Command {
 			client := clientFromCmd(cmd)
 			out := cmd.OutOrStdout()
 
-			clusterList, err := client.Clusters().List(cmd.Context())
+			clusterList, err := client.Clusters().List(cmd.Context(), client.Namespace())
 			if err != nil {
 				return fmt.Errorf("listing clusters: %w", err)
 			}
