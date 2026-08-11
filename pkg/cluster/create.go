@@ -13,16 +13,18 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
-	"github.com/openshift-online/gcp-hcp-ctl/pkg/hyperfleet"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/infra/iam"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/infra/network"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
+	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const maxInfraIDLength = 15
+const maxInfraIDLength = 12
 
 var (
-	sanitizePattern  = regexp.MustCompile(`[^a-z0-9-]`)
+	sanitizePattern     = regexp.MustCompile(`[^a-z0-9-]`)
 	validInfraIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 )
 
@@ -36,11 +38,6 @@ func validateInfraID(id string) error {
 	return nil
 }
 
-// generateCompliantInfraID creates a GCP-compliant infra ID from a cluster name.
-// Compliance rules: must start with a lowercase letter, contain only lowercase
-// letters, digits, or hyphens, and be at most 15 characters long.
-// The name is sanitized and truncated, then a random 4-char hex suffix is
-// appended for uniqueness. Result format: <prefix>-<4hex>, e.g. "mycluster-a3f1".
 func generateCompliantInfraID(clusterName string) (string, error) {
 	sanitized := strings.ToLower(clusterName)
 	sanitized = sanitizePattern.ReplaceAllString(sanitized, "")
@@ -82,7 +79,7 @@ func newCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <cluster-name>",
 		Short: "Create a cluster",
-		Long: `Create a cluster via the HyperFleet API.
+		Long: `Create a cluster via the platform API server.
 
 Two modes of operation:
 
@@ -127,13 +124,20 @@ func (o *createOptions) run(cmd *cobra.Command, clusterName string) error {
 		return fmt.Errorf("--dry-run cannot be combined with --setup-infra because setup-infra has side effects")
 	}
 
-	if !hyperfleet.GCPClusterPlatformEndpointAccess(o.endpointAccess).Valid() {
+	switch o.endpointAccess {
+	case "Private", "PublicAndPrivate":
+	default:
 		return fmt.Errorf("--endpoint-access must be one of: Private, PublicAndPrivate")
 	}
+
 	switch o.channelGroup {
 	case "", "stable", "fast", "candidate", "eus":
 	default:
 		return fmt.Errorf("--channel-group must be one of: stable, fast, candidate, eus")
+	}
+
+	if o.version == "" {
+		return fmt.Errorf("--version is required (e.g. --version 4.22.0)")
 	}
 
 	oidcBase, _ := cmd.Flags().GetString("oidc-endpoint")
@@ -155,7 +159,7 @@ func (o *createOptions) run(cmd *cobra.Command, clusterName string) error {
 
 	client := clientFromCmd(cmd)
 
-	opts := buildPayloadOptions{
+	bpo := buildPayloadOptions{
 		clusterName:    clusterName,
 		infraID:        infraID,
 		projectID:      project,
@@ -166,20 +170,20 @@ func (o *createOptions) run(cmd *cobra.Command, clusterName string) error {
 		channelGroup:   o.channelGroup,
 	}
 
-	var req *hyperfleet.ClusterCreateRequest
+	var cluster *gcpv1.Cluster
 
 	switch {
 	case o.iamConfigFile != "":
 		if o.networkConfigFile == "" {
 			return fmt.Errorf("--network-config-file is required with --iam-config-file")
 		}
-		req, err = buildPayloadFromConfigs(o.iamConfigFile, o.networkConfigFile, opts)
+		cluster, err = buildPayloadFromConfigs(o.iamConfigFile, o.networkConfigFile, bpo)
 		if err != nil {
 			return err
 		}
 
 	case o.setupInfra:
-		req, err = buildPayloadWithInfraSetup(cmd.Context(), cmd.ErrOrStderr(), opts)
+		cluster, err = buildPayloadWithInfraSetup(cmd.Context(), cmd.ErrOrStderr(), bpo)
 		if err != nil {
 			return err
 		}
@@ -190,27 +194,24 @@ func (o *createOptions) run(cmd *cobra.Command, clusterName string) error {
 
 	if o.dryRun {
 		out := cmd.OutOrStdout()
-		fmt.Fprintln(out, "Dry run — would POST this payload:")
-		data, err := json.MarshalIndent(req, "", "  ")
+		if _, err := fmt.Fprintln(out, "Dry run — would POST this payload:"); err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(cluster, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshaling payload: %w", err)
 		}
-		fmt.Fprintln(out, string(data))
-		return nil
+		_, err = fmt.Fprintln(out, string(data))
+		return err
 	}
 
-	resp, err := client.PostClusterWithResponse(cmd.Context(), *req)
+	ns := platformapi.NamespaceForProject(bpo.projectID)
+	created, err := client.Clusters().Create(cmd.Context(), ns, cluster)
 	if err != nil {
 		return fmt.Errorf("creating cluster: %w", err)
 	}
-	if resp.JSON201 == nil {
-		if resp.HTTPResponse == nil {
-			return fmt.Errorf("creating cluster: no response received")
-		}
-		return fmt.Errorf("creating cluster: %s", formatError(resp.HTTPResponse, resp.Body))
-	}
 
-	return printCluster(cmd.OutOrStdout(), resp.JSON201, o.outputFmt)
+	return printCluster(cmd.OutOrStdout(), created, o.outputFmt)
 }
 
 type buildPayloadOptions struct {
@@ -228,10 +229,7 @@ func (o buildPayloadOptions) issuerURL() string {
 	return fmt.Sprintf("%s/%s", strings.TrimRight(o.oidcEndpoint, "/"), o.infraID)
 }
 
-// buildPayloadFromConfigs assembles a cluster creation payload from
-// pre-provisioned IAM and network config files (output of 'gcphcpctl iam create'
-// and 'gcphcpctl network create').
-func buildPayloadFromConfigs(iamConfigFile, networkConfigFile string, opts buildPayloadOptions) (*hyperfleet.ClusterCreateRequest, error) {
+func buildPayloadFromConfigs(iamConfigFile, networkConfigFile string, opts buildPayloadOptions) (*gcpv1.Cluster, error) {
 	iamData, err := os.ReadFile(iamConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading IAM config: %w", err)
@@ -269,9 +267,7 @@ func buildPayloadFromConfigs(iamConfigFile, networkConfigFile string, opts build
 	return assemblePayload(&iamConfig, &netConfig, opts)
 }
 
-// buildPayloadWithInfraSetup provisions IAM and network infrastructure on the fly,
-// then assembles a cluster creation payload from the provisioned resources.
-func buildPayloadWithInfraSetup(ctx context.Context, w io.Writer, opts buildPayloadOptions) (*hyperfleet.ClusterCreateRequest, error) {
+func buildPayloadWithInfraSetup(ctx context.Context, w io.Writer, opts buildPayloadOptions) (*gcpv1.Cluster, error) {
 	if opts.projectID == "" {
 		return nil, fmt.Errorf("--project is required with --setup-infra (or set GCPHCPCTL_PROJECT or project in config)")
 	}
@@ -336,65 +332,53 @@ func validatePayloadInputs(projectID, region string, iamOutput *iam.CreateOutput
 	return nil
 }
 
-func assemblePayload(iamOutput *iam.CreateOutput, netOutput *network.CreateOutput, opts buildPayloadOptions) (*hyperfleet.ClusterCreateRequest, error) {
+func assemblePayload(iamOutput *iam.CreateOutput, netOutput *network.CreateOutput, opts buildPayloadOptions) (*gcpv1.Cluster, error) {
 	if err := validatePayloadInputs(opts.projectID, opts.region, iamOutput, netOutput); err != nil {
 		return nil, err
 	}
 
 	issuerURL := opts.issuerURL()
 
-	ea := hyperfleet.GCPClusterPlatformEndpointAccess(opts.endpointAccess)
-
-	saRef := &hyperfleet.GCPServiceAccountsRef{
-		ControlPlaneEmail:    strPtr(iamOutput.ServiceAccounts["ctrlplane-op"]),
-		NodePoolEmail:        strPtr(iamOutput.ServiceAccounts["nodepool-mgmt"]),
-		CloudControllerEmail: strPtr(iamOutput.ServiceAccounts["cloud-controller"]),
-		StorageEmail:         strPtr(iamOutput.ServiceAccounts["gcp-pd-csi"]),
-		ImageRegistryEmail:   strPtr(iamOutput.ServiceAccounts["image-registry"]),
-		NetworkEmail:         strPtr(iamOutput.ServiceAccounts["cloud-network"]),
-	}
-
-	wif := &hyperfleet.GCPWorkloadIdentity{
-		ProjectNumber:      iamOutput.ProjectNumber,
-		PoolID:             iamOutput.WorkloadIdentityPool.PoolID,
-		ProviderID:         iamOutput.WorkloadIdentityPool.ProviderID,
-		ServiceAccountsRef: saRef,
-	}
-
-	spec := hyperfleet.ClusterSpec{
-		InfraID:   &opts.infraID,
-		IssuerURL: &issuerURL,
-		Platform: hyperfleet.ClusterPlatformSpec{
-			Type: hyperfleet.ClusterPlatformSpecTypeGcp,
-			Gcp: hyperfleet.GCPClusterPlatform{
-				ProjectID:        opts.projectID,
-				Region:           opts.region,
-				Network:          &netOutput.NetworkName,
-				Subnet:           &netOutput.SubnetName,
-				EndpointAccess:   &ea,
-				WorkloadIdentity: wif,
+	cluster := &gcpv1.Cluster{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: gcpv1.GroupVersion.String(),
+			Kind:       "Cluster",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: opts.clusterName,
+		},
+		Spec: gcpv1.ClusterSpec{
+			InfraID:   opts.infraID,
+			IssuerURL: issuerURL,
+			Platform: gcpv1.ClusterPlatformSpec{
+				Type: "GCP",
+				GCP: &gcpv1.GCPClusterPlatform{
+					ProjectID:      opts.projectID,
+					Region:         opts.region,
+					Network:        netOutput.NetworkName,
+					Subnet:         netOutput.SubnetName,
+					EndpointAccess: opts.endpointAccess,
+					WorkloadIdentity: gcpv1.WorkloadIdentitySpec{
+						ProjectNumber: iamOutput.ProjectNumber,
+						PoolID:        iamOutput.WorkloadIdentityPool.PoolID,
+						ProviderID:    iamOutput.WorkloadIdentityPool.ProviderID,
+						ServiceAccountsRef: &gcpv1.ServiceAccountsRef{
+							ControlPlaneEmail:    iamOutput.ServiceAccounts["ctrlplane-op"],
+							NodePoolEmail:        iamOutput.ServiceAccounts["nodepool-mgmt"],
+							CloudControllerEmail: iamOutput.ServiceAccounts["cloud-controller"],
+							StorageEmail:         iamOutput.ServiceAccounts["gcp-pd-csi"],
+							ImageRegistryEmail:   iamOutput.ServiceAccounts["image-registry"],
+							NetworkEmail:         iamOutput.ServiceAccounts["cloud-network"],
+						},
+					},
+				},
+			},
+			Release: gcpv1.ReleaseSpec{
+				Version:      opts.version,
+				ChannelGroup: opts.channelGroup,
 			},
 		},
 	}
 
-	if opts.version != "" {
-		spec.Release = &hyperfleet.ReleaseSpec{
-			Version: &opts.version,
-		}
-		if opts.channelGroup != "" {
-			spec.Release.ChannelGroup = &opts.channelGroup
-		}
-	}
-
-	kind := "Cluster"
-	// Default shard label for HyperFleet scheduling; all CLI-created clusters
-	// are assigned to shard 1 until multi-shard support is exposed.
-	labels := map[string]string{"shard": "1"}
-
-	return &hyperfleet.ClusterCreateRequest{
-		Name:   opts.clusterName,
-		Spec:   spec,
-		Kind:   &kind,
-		Labels: &labels,
-	}, nil
+	return cluster, nil
 }

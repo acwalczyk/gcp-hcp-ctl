@@ -9,122 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openshift-online/gcp-hcp-ctl/pkg/hyperfleet"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/kubeconfig"
 )
 
-func dataPtr(m map[string]any) *map[string]any {
-	return &m
-}
-
-func TestExtractEndpointFromStatuses(t *testing.T) {
-	t.Run("When hc-adapter has apiEndpoint it should return it", func(t *testing.T) {
-		wantEndpoint := "https://api.test-cluster.example.com"
-
-		endpoint, err := extractEndpointFromStatuses([]hyperfleet.AdapterStatus{
-			{Adapter: "placement-adapter", Data: dataPtr(map[string]any{})},
-			{
-				Adapter: hcAdapterName,
-				Data: dataPtr(map[string]any{
-					"hostedCluster": map[string]any{
-						"apiEndpoint": wantEndpoint,
-					},
-				}),
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if endpoint != wantEndpoint {
-			t.Errorf("got %q, want %q", endpoint, wantEndpoint)
-		}
-	})
-
-	t.Run("When hc-adapter has no apiEndpoint it should return an error", func(t *testing.T) {
-		_, err := extractEndpointFromStatuses([]hyperfleet.AdapterStatus{
-			{Adapter: hcAdapterName, Data: dataPtr(map[string]any{})},
-		})
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-
-	t.Run("When no hc-adapter exists it should return an error", func(t *testing.T) {
-		_, err := extractEndpointFromStatuses([]hyperfleet.AdapterStatus{
-			{Adapter: "other-adapter", Data: dataPtr(map[string]any{})},
-		})
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-
-	t.Run("When items list is empty it should return an error", func(t *testing.T) {
-		_, err := extractEndpointFromStatuses(nil)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-
-	t.Run("When apiEndpoint is not HTTPS it should return an error", func(t *testing.T) {
-		_, err := extractEndpointFromStatuses([]hyperfleet.AdapterStatus{
-			{
-				Adapter: hcAdapterName,
-				Data: dataPtr(map[string]any{
-					"hostedCluster": map[string]any{
-						"apiEndpoint": "http://insecure.example.com",
-					},
-				}),
-			},
-		})
-		if err == nil {
-			t.Fatal("expected error for non-HTTPS endpoint, got nil")
-		}
-	})
-
-	t.Run("When apiEndpoint contains whitespace it should return an error", func(t *testing.T) {
-		_, err := extractEndpointFromStatuses([]hyperfleet.AdapterStatus{
-			{
-				Adapter: hcAdapterName,
-				Data: dataPtr(map[string]any{
-					"hostedCluster": map[string]any{
-						"apiEndpoint": "https:// malicious.com",
-					},
-				}),
-			},
-		})
-		if err == nil {
-			t.Fatal("expected error for URL with whitespace, got nil")
-		}
-	})
-
-	t.Run("When apiEndpoint has no host it should return an error", func(t *testing.T) {
-		_, err := extractEndpointFromStatuses([]hyperfleet.AdapterStatus{
-			{
-				Adapter: hcAdapterName,
-				Data: dataPtr(map[string]any{
-					"hostedCluster": map[string]any{
-						"apiEndpoint": "https://",
-					},
-				}),
-			},
-		})
-		if err == nil {
-			t.Fatal("expected error for URL without host, got nil")
-		}
-	})
-
-	t.Run("When hc-adapter data is nil it should return an error", func(t *testing.T) {
-		_, err := extractEndpointFromStatuses([]hyperfleet.AdapterStatus{
-			{Adapter: hcAdapterName, Data: nil},
-		})
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-}
-
-// writeTestKubeconfig creates a kubeconfig at path with the given current-context
-// and a matching context entry so RestoreContext can find it.
 func writeTestKubeconfig(t *testing.T, path, currentContext string) {
 	t.Helper()
 	content := fmt.Sprintf(`apiVersion: v1
@@ -151,9 +38,6 @@ current-context: %[1]s
 	}
 }
 
-// setupLoginWithValidation writes a kubeconfig with a previous context, runs
-// kubeconfig.Update to switch to a new context, then calls the shared
-// handleValidationFailure helper (the same code path as runLogin).
 func setupLoginWithValidation(t *testing.T, previousContext string, validateFn validateAccessFunc) (output string, err error) {
 	t.Helper()
 	dir := t.TempDir()

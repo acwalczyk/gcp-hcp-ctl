@@ -10,11 +10,11 @@ func newDeleteCmd() *cobra.Command {
 	var confirm bool
 
 	cmd := &cobra.Command{
-		Use:   "delete <cluster-id-or-name>",
+		Use:   "delete <cluster-name>",
 		Short: "Delete a cluster",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return fmt.Errorf("cluster ID or name is required\n\nUsage: %s", cmd.UseLine())
+				return fmt.Errorf("cluster name is required\n\nUsage: %s", cmd.UseLine())
 			}
 			return cobra.ExactArgs(1)(cmd, args)
 		},
@@ -24,28 +24,18 @@ func newDeleteCmd() *cobra.Command {
 			}
 
 			client := clientFromCmd(cmd)
-			cluster, err := resolveCluster(cmd.Context(), client, args[0])
+			name := args[0]
+
+			cluster, err := client.ResolveCluster(cmd.Context(), name)
 			if err != nil {
 				return err
 			}
 
-			clusterID := ptrStr(cluster.Id)
-			if clusterID == "" {
-				return fmt.Errorf("cluster %q has no ID", args[0])
+			if err := client.Clusters().Delete(cmd.Context(), cluster.Namespace, cluster.Name); err != nil {
+				return fmt.Errorf("deleting cluster %s: %w", name, err)
 			}
 
-			resp, err := client.DeleteClusterByIdWithResponse(cmd.Context(), clusterID)
-			if err != nil {
-				return fmt.Errorf("deleting cluster %s: %w", cluster.Name, err)
-			}
-			if resp.JSON202 == nil {
-				if resp.HTTPResponse == nil {
-					return fmt.Errorf("deleting cluster %s: no response received", cluster.Name)
-				}
-				return fmt.Errorf("deleting cluster %s: %s", cluster.Name, formatError(resp.HTTPResponse, resp.Body))
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "Cluster %s deletion initiated.\n", cluster.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Cluster %s (project: %s) deletion initiated.\n", name, cluster.Namespace)
 			return nil
 		},
 	}

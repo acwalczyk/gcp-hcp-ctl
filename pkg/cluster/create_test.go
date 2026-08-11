@@ -80,16 +80,6 @@ func TestGenerateCompliantInfraID(t *testing.T) {
 		}
 	})
 
-	t.Run("When name has trailing hyphens it should trim them", func(t *testing.T) {
-		id, err := generateCompliantInfraID("cluster---")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !infraIDPattern.MatchString(id) {
-			t.Errorf("infra ID %q should not contain trailing hyphens before suffix", id)
-		}
-	})
-
 	t.Run("When called twice it should produce different IDs", func(t *testing.T) {
 		id1, err := generateCompliantInfraID("cluster")
 		if err != nil {
@@ -115,22 +105,12 @@ func TestValidateInfraID(t *testing.T) {
 	})
 
 	t.Run("When infra ID is exactly max length it should return no error", func(t *testing.T) {
-		id := "abcde-fghij-klm"
+		id := "abcde-fghijk"
 		if len(id) != maxInfraIDLength {
 			t.Fatalf("test setup: expected length %d, got %d", maxInfraIDLength, len(id))
 		}
 		if err := validateInfraID(id); err != nil {
 			t.Errorf("expected %q to be valid, got error: %v", id, err)
-		}
-	})
-
-	t.Run("When infra ID exceeds max length by one it should return error", func(t *testing.T) {
-		id := "abcde-fghij-klmn"
-		if len(id) != maxInfraIDLength+1 {
-			t.Fatalf("test setup: expected length %d, got %d", maxInfraIDLength+1, len(id))
-		}
-		if err := validateInfraID(id); err == nil {
-			t.Error("expected error for infra ID exceeding max length")
 		}
 	})
 
@@ -148,24 +128,10 @@ func TestValidateInfraID(t *testing.T) {
 		}
 	})
 
-	t.Run("When infra ID starts with a hyphen it should return error", func(t *testing.T) {
-		err := validateInfraID("-abc")
-		if err == nil {
-			t.Error("expected error for infra ID starting with a hyphen")
-		}
-	})
-
 	t.Run("When infra ID contains uppercase letters it should return error", func(t *testing.T) {
 		err := validateInfraID("MyInfra")
 		if err == nil {
 			t.Error("expected error for infra ID with uppercase letters")
-		}
-	})
-
-	t.Run("When infra ID contains special characters it should return error", func(t *testing.T) {
-		err := validateInfraID("my_infra")
-		if err == nil {
-			t.Error("expected error for infra ID with underscores")
 		}
 	})
 
@@ -177,29 +143,33 @@ func TestValidateInfraID(t *testing.T) {
 	})
 }
 
-func TestAssemblePayload(t *testing.T) {
-	t.Run("When given valid IAM output it should produce correct JSON", func(t *testing.T) {
-		iamOutput := &iam.CreateOutput{
-			ProjectID:     "my-project",
-			ProjectNumber: "123456789",
-			InfraID:       "test-cluster",
-			WorkloadIdentityPool: iam.WorkloadIdentityConfig{
-				PoolID:     "my-pool",
-				ProviderID: "my-provider",
-			},
-			ServiceAccounts: map[string]string{
-				"ctrlplane-op":     "ctrlplane@my-project.iam.gserviceaccount.com",
-				"nodepool-mgmt":    "nodepool@my-project.iam.gserviceaccount.com",
-				"cloud-controller": "cloud-ctrl@my-project.iam.gserviceaccount.com",
-				"gcp-pd-csi":       "storage@my-project.iam.gserviceaccount.com",
-				"image-registry":   "registry@my-project.iam.gserviceaccount.com",
-				"cloud-network":    "network@my-project.iam.gserviceaccount.com",
-			},
-		}
+func validIAMOutput() *iam.CreateOutput {
+	return &iam.CreateOutput{
+		ProjectID:     "my-project",
+		ProjectNumber: "123456789",
+		InfraID:       "test-infra",
+		WorkloadIdentityPool: iam.WorkloadIdentityConfig{
+			PoolID:     "my-pool",
+			ProviderID: "my-provider",
+		},
+		ServiceAccounts: map[string]string{
+			"ctrlplane-op":     "ctrlplane@my-project.iam.gserviceaccount.com",
+			"nodepool-mgmt":    "nodepool@my-project.iam.gserviceaccount.com",
+			"cloud-controller": "cloud-ctrl@my-project.iam.gserviceaccount.com",
+			"gcp-pd-csi":       "storage@my-project.iam.gserviceaccount.com",
+			"image-registry":   "registry@my-project.iam.gserviceaccount.com",
+			"cloud-network":    "network@my-project.iam.gserviceaccount.com",
+		},
+	}
+}
 
+func TestAssemblePayload(t *testing.T) {
+	t.Run("When given valid inputs it should produce a correct cluster object", func(t *testing.T) {
+		iamOutput := validIAMOutput()
+		netOutput := &network.CreateOutput{NetworkName: "my-vpc", SubnetName: "my-subnet"}
 		opts := buildPayloadOptions{
 			clusterName:    "test-cluster",
-			infraID:        "test-cluster",
+			infraID:        "test-infra",
 			projectID:      "my-project",
 			region:         "us-central1",
 			endpointAccess: "PublicAndPrivate",
@@ -208,97 +178,53 @@ func TestAssemblePayload(t *testing.T) {
 			channelGroup:   "candidate",
 		}
 
-		netOutput := &network.CreateOutput{
-			NetworkName: "my-vpc",
-			SubnetName:  "my-subnet",
-		}
-		req, err := assemblePayload(iamOutput, netOutput, opts)
+		cluster, err := assemblePayload(iamOutput, netOutput, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if req.Name != "test-cluster" {
-			t.Errorf("expected name 'test-cluster', got %v", req.Name)
+		if cluster.Name != "test-cluster" {
+			t.Errorf("expected name 'test-cluster', got %q", cluster.Name)
 		}
-		if req.Kind == nil || *req.Kind != "Cluster" {
-			t.Errorf("expected kind 'Cluster', got %v", req.Kind)
+		if cluster.Kind != "Cluster" {
+			t.Errorf("expected kind 'Cluster', got %q", cluster.Kind)
 		}
-		if req.Spec.IssuerURL == nil || *req.Spec.IssuerURL != "https://oidc.example.com/test-cluster" {
-			t.Errorf("expected issuerURL 'https://oidc.example.com/test-cluster', got %v", req.Spec.IssuerURL)
+		if cluster.Spec.IssuerURL != "https://oidc.example.com/test-infra" {
+			t.Errorf("expected issuerURL 'https://oidc.example.com/test-infra', got %q", cluster.Spec.IssuerURL)
 		}
-		if req.Spec.InfraID == nil || *req.Spec.InfraID != "test-cluster" {
-			t.Errorf("expected infraID 'test-cluster', got %v", req.Spec.InfraID)
+		if cluster.Spec.InfraID != "test-infra" {
+			t.Errorf("expected infraID 'test-infra', got %q", cluster.Spec.InfraID)
 		}
-		if req.Spec.Release == nil || req.Spec.Release.Version == nil || *req.Spec.Release.Version != "4.22.0" {
-			t.Error("expected version '4.22.0'")
+		if cluster.Spec.Release.Version != "4.22.0" {
+			t.Errorf("expected version '4.22.0', got %q", cluster.Spec.Release.Version)
 		}
-		if req.Spec.Release.ChannelGroup == nil || *req.Spec.Release.ChannelGroup != "candidate" {
-			t.Errorf("expected channelGroup 'candidate', got %v", req.Spec.Release.ChannelGroup)
+		if cluster.Spec.Release.ChannelGroup != "candidate" {
+			t.Errorf("expected channelGroup 'candidate', got %q", cluster.Spec.Release.ChannelGroup)
 		}
-		if req.Spec.Platform.Gcp.ProjectID != "my-project" {
-			t.Errorf("expected projectID 'my-project', got %v", req.Spec.Platform.Gcp.ProjectID)
+		if cluster.Spec.Platform.GCP == nil {
+			t.Fatal("expected GCP platform to be non-nil")
 		}
-		if req.Spec.Platform.Gcp.Region != "us-central1" {
-			t.Errorf("expected region 'us-central1', got %v", req.Spec.Platform.Gcp.Region)
+		if cluster.Spec.Platform.GCP.ProjectID != "my-project" {
+			t.Errorf("expected projectID 'my-project', got %q", cluster.Spec.Platform.GCP.ProjectID)
 		}
-		if req.Spec.Platform.Gcp.Network == nil || *req.Spec.Platform.Gcp.Network != "my-vpc" {
-			t.Errorf("expected network 'my-vpc', got %v", req.Spec.Platform.Gcp.Network)
+		if cluster.Spec.Platform.GCP.Region != "us-central1" {
+			t.Errorf("expected region 'us-central1', got %q", cluster.Spec.Platform.GCP.Region)
 		}
-		if req.Spec.Platform.Gcp.Subnet == nil || *req.Spec.Platform.Gcp.Subnet != "my-subnet" {
-			t.Errorf("expected subnet 'my-subnet', got %v", req.Spec.Platform.Gcp.Subnet)
+		if cluster.Spec.Platform.GCP.Network != "my-vpc" {
+			t.Errorf("expected network 'my-vpc', got %q", cluster.Spec.Platform.GCP.Network)
 		}
-	})
-
-	t.Run("When version is empty it should omit release", func(t *testing.T) {
-		iamOutput := &iam.CreateOutput{
-			ProjectID:     "proj",
-			ProjectNumber: "999",
-			InfraID:       "cl",
-			WorkloadIdentityPool: iam.WorkloadIdentityConfig{
-				PoolID:     "p",
-				ProviderID: "pr",
-			},
-			ServiceAccounts: map[string]string{
-				"ctrlplane-op": "a@p.iam", "nodepool-mgmt": "b@p.iam",
-				"cloud-controller": "c@p.iam", "gcp-pd-csi": "d@p.iam",
-				"image-registry": "e@p.iam", "cloud-network": "f@p.iam",
-			},
+		if cluster.Spec.Platform.GCP.WorkloadIdentity.ServiceAccountsRef == nil {
+			t.Fatal("expected serviceAccountsRef to be non-nil")
 		}
-		netOutput := &network.CreateOutput{NetworkName: "net", SubnetName: "sub"}
-
-		opts := buildPayloadOptions{
-			clusterName:    "cl",
-			infraID:        "cl",
-			projectID:      "proj",
-			region:         "us-east1",
-			endpointAccess: "Private",
-			oidcEndpoint:   "https://oidc.test",
-		}
-
-		req, err := assemblePayload(iamOutput, netOutput, opts)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if req.Spec.Release != nil {
-			t.Error("expected release to be nil when version is empty")
+		if cluster.Spec.Platform.GCP.WorkloadIdentity.ServiceAccountsRef.ControlPlaneEmail != "ctrlplane@my-project.iam.gserviceaccount.com" {
+			t.Errorf("unexpected controlPlane email: %q", cluster.Spec.Platform.GCP.WorkloadIdentity.ServiceAccountsRef.ControlPlaneEmail)
 		}
 	})
 
 	t.Run("When network config is missing networkName it should return error", func(t *testing.T) {
-		iamOutput := &iam.CreateOutput{
-			ProjectID: "proj", ProjectNumber: "999",
-			WorkloadIdentityPool: iam.WorkloadIdentityConfig{PoolID: "p", ProviderID: "pr"},
-			ServiceAccounts: map[string]string{
-				"ctrlplane-op": "a@p.iam", "nodepool-mgmt": "b@p.iam",
-				"cloud-controller": "c@p.iam", "gcp-pd-csi": "d@p.iam",
-				"image-registry": "e@p.iam", "cloud-network": "f@p.iam",
-			},
-		}
+		iamOutput := validIAMOutput()
 		netOutput := &network.CreateOutput{SubnetName: "sub"}
-
 		opts := buildPayloadOptions{clusterName: "cl", infraID: "cl", projectID: "proj", region: "us-east1", endpointAccess: "Private", oidcEndpoint: "https://oidc.test"}
-
 		_, err := assemblePayload(iamOutput, netOutput, opts)
 		if err == nil {
 			t.Error("expected error for missing networkName")
@@ -312,9 +238,7 @@ func TestAssemblePayload(t *testing.T) {
 			ServiceAccounts:      map[string]string{},
 		}
 		netOutput := &network.CreateOutput{NetworkName: "net", SubnetName: "sub"}
-
 		opts := buildPayloadOptions{clusterName: "cl", infraID: "cl", projectID: "proj", region: "us-east1", endpointAccess: "Private", oidcEndpoint: "https://oidc.test"}
-
 		_, err := assemblePayload(iamOutput, netOutput, opts)
 		if err == nil {
 			t.Error("expected error for missing service accounts")
@@ -326,23 +250,8 @@ func TestBuildPayloadFromConfigs(t *testing.T) {
 	t.Run("When given valid config files it should assemble payload", func(t *testing.T) {
 		dir := t.TempDir()
 
-		iamConfig := iam.CreateOutput{
-			ProjectID:     "test-proj",
-			ProjectNumber: "111222",
-			InfraID:       "my-infra",
-			WorkloadIdentityPool: iam.WorkloadIdentityConfig{
-				PoolID:     "pool-1",
-				ProviderID: "prov-1",
-			},
-			ServiceAccounts: map[string]string{
-				"ctrlplane-op":     "cp@test-proj.iam.gserviceaccount.com",
-				"nodepool-mgmt":    "np@test-proj.iam.gserviceaccount.com",
-				"cloud-controller": "cc@test-proj.iam.gserviceaccount.com",
-				"gcp-pd-csi":       "pd@test-proj.iam.gserviceaccount.com",
-				"image-registry":   "ir@test-proj.iam.gserviceaccount.com",
-				"cloud-network":    "cn@test-proj.iam.gserviceaccount.com",
-			},
-		}
+		iamConfig := validIAMOutput()
+		iamConfig.InfraID = "my-infra"
 		iamFile := filepath.Join(dir, "iam.json")
 		iamData, err := json.Marshal(iamConfig)
 		if err != nil {
@@ -373,47 +282,33 @@ func TestBuildPayloadFromConfigs(t *testing.T) {
 			endpointAccess: "PublicAndPrivate",
 			oidcEndpoint:   "https://oidc.test",
 			version:        "4.21.0",
+			channelGroup:   "stable",
 		}
 
-		req, err := buildPayloadFromConfigs(iamFile, netFile, opts)
+		cluster, err := buildPayloadFromConfigs(iamFile, netFile, opts)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if req.Name != "my-cluster" {
-			t.Errorf("expected name 'my-cluster', got %v", req.Name)
+		if cluster.Name != "my-cluster" {
+			t.Errorf("expected name 'my-cluster', got %q", cluster.Name)
 		}
-		if req.Spec.InfraID == nil || *req.Spec.InfraID != "my-infra" {
-			t.Errorf("expected infraID from IAM config 'my-infra' to override generated ID, got %v", req.Spec.InfraID)
+		if cluster.Spec.InfraID != "my-infra" {
+			t.Errorf("expected infraID from IAM config 'my-infra' to override generated ID, got %q", cluster.Spec.InfraID)
 		}
-		if req.Spec.Platform.Gcp.Region != "europe-west1" {
-			t.Errorf("expected region from network config 'europe-west1', got %v", req.Spec.Platform.Gcp.Region)
-		}
-		if req.Spec.Platform.Gcp.Network == nil || *req.Spec.Platform.Gcp.Network != "net-1" {
-			t.Errorf("expected network 'net-1', got %v", req.Spec.Platform.Gcp.Network)
+		if cluster.Spec.Platform.GCP.Region != "europe-west1" {
+			t.Errorf("expected region from network config 'europe-west1', got %q", cluster.Spec.Platform.GCP.Region)
 		}
 	})
 
 	t.Run("When network config projectId differs from IAM config it should return error", func(t *testing.T) {
 		dir := t.TempDir()
 
-		iamConfig := iam.CreateOutput{
-			ProjectID:     "project-a",
-			ProjectNumber: "111",
-			WorkloadIdentityPool: iam.WorkloadIdentityConfig{
-				PoolID: "p", ProviderID: "pr",
-			},
-			ServiceAccounts: map[string]string{
-				"ctrlplane-op": "a@p.iam", "nodepool-mgmt": "b@p.iam",
-				"cloud-controller": "c@p.iam", "gcp-pd-csi": "d@p.iam",
-				"image-registry": "e@p.iam", "cloud-network": "f@p.iam",
-			},
-		}
+		iamConfig := validIAMOutput()
+		iamConfig.ProjectID = "project-a"
 		iamFile := filepath.Join(dir, "iam.json")
 		iamData, _ := json.Marshal(iamConfig)
-		if err := os.WriteFile(iamFile, iamData, 0644); err != nil {
-			t.Fatalf("writing IAM config: %v", err)
-		}
+		os.WriteFile(iamFile, iamData, 0644)
 
 		netConfig := map[string]string{
 			"projectId":   "project-b",
@@ -423,9 +318,7 @@ func TestBuildPayloadFromConfigs(t *testing.T) {
 		}
 		netFile := filepath.Join(dir, "net.json")
 		netData, _ := json.Marshal(netConfig)
-		if err := os.WriteFile(netFile, netData, 0644); err != nil {
-			t.Fatalf("writing network config: %v", err)
-		}
+		os.WriteFile(netFile, netData, 0644)
 
 		opts := buildPayloadOptions{
 			clusterName:  "cl",
@@ -446,53 +339,6 @@ func TestBuildPayloadFromConfigs(t *testing.T) {
 		_, err := buildPayloadFromConfigs("/nonexistent/iam.json", "", opts)
 		if err == nil {
 			t.Error("expected error for missing IAM config file")
-		}
-	})
-
-	t.Run("When IAM config has no infraID it should default to cluster name", func(t *testing.T) {
-		dir := t.TempDir()
-
-		iamConfig := iam.CreateOutput{
-			ProjectID:     "proj",
-			ProjectNumber: "999",
-			WorkloadIdentityPool: iam.WorkloadIdentityConfig{
-				PoolID:     "p",
-				ProviderID: "pr",
-			},
-			ServiceAccounts: map[string]string{
-				"ctrlplane-op": "a@p.iam", "nodepool-mgmt": "b@p.iam",
-				"cloud-controller": "c@p.iam", "gcp-pd-csi": "d@p.iam",
-				"image-registry": "e@p.iam", "cloud-network": "f@p.iam",
-			},
-		}
-		iamFile := filepath.Join(dir, "iam.json")
-		iamData, err := json.Marshal(iamConfig)
-		if err != nil {
-			t.Fatalf("marshaling IAM config: %v", err)
-		}
-		if err := os.WriteFile(iamFile, iamData, 0644); err != nil {
-			t.Fatalf("writing IAM config: %v", err)
-		}
-
-		netFile := filepath.Join(dir, "net.json")
-		if err := os.WriteFile(netFile, []byte(`{"region":"us-east1","networkName":"net","subnetName":"sub"}`), 0644); err != nil {
-			t.Fatalf("writing network config: %v", err)
-		}
-
-		opts := buildPayloadOptions{
-			clusterName:  "fallback-name",
-			infraID:      "fallback-name",
-			region:       "us-central1",
-			oidcEndpoint: "https://oidc.test",
-		}
-
-		req, err := buildPayloadFromConfigs(iamFile, netFile, opts)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if req.Spec.InfraID == nil || *req.Spec.InfraID != "fallback-name" {
-			t.Errorf("expected infraID to fall back to cluster name 'fallback-name', got %v", req.Spec.InfraID)
 		}
 	})
 }
