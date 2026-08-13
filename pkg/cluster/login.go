@@ -125,12 +125,17 @@ func resolveClusterEndpoint(ctx context.Context, client *platformapi.Client, clu
 		return "", clusterName, fmt.Errorf("no API endpoint found in cluster status (cluster may still be provisioning)")
 	}
 
-	parsed, err := url.Parse(hcr.APIEndpoint)
+	endpoint := hcr.APIEndpoint
+	if !strings.HasPrefix(endpoint, "https://") {
+		endpoint = "https://" + endpoint
+	}
+
+	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 		return "", clusterName, fmt.Errorf("cluster returned invalid endpoint %q: must be a valid HTTPS URL", hcr.APIEndpoint)
 	}
 
-	return hcr.APIEndpoint, clusterName, nil
+	return endpoint, clusterName, nil
 }
 
 func validateAccess(ctx context.Context, kubeconfigPath, contextName string) (string, error) {

@@ -5,31 +5,26 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
-	"strings"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
-	"github.com/openshift-online/gcp-hcp-ctl/pkg/hyperfleet"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
+	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type contextKey string
 
-const clientKey contextKey = "hyperfleet-client"
-
-// defaultShardLabel is required by the nodepool sentinel's resource_selector
-// for discovery. Without it, sentinels filtering on shard="1" will not pick
-// up the nodepool and adapters will never reconcile it.
-const defaultShardLabel = "1"
+const clientKey contextKey = "platform-api-client"
 
 // NewNodePoolCmd returns the "nodepool" command group.
 func NewNodePoolCmd() *cobra.Command {
 	var npCmd *cobra.Command
 	npCmd = &cobra.Command{
 		Use:          "nodepool",
-		Short:        "Manage HyperFleet nodepools",
-		Long:         `Create, get, list, delete, and scale nodepools via the HyperFleet API.`,
+		Short:        "Manage nodepools",
+		Long:         `Create, get, list, delete, and scale nodepools via the platform API server.`,
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if parent := npCmd.Parent(); parent != nil && parent.PersistentPreRunE != nil {
@@ -41,7 +36,8 @@ func NewNodePoolCmd() *cobra.Command {
 				return err
 			}
 			apiEndpoint, _ := cmd.Flags().GetString("api-endpoint")
-			client, err := newClient(apiEndpoint)
+			project, _ := cmd.Flags().GetString("project")
+			client, err := newClient(apiEndpoint, project)
 			if err != nil {
 				return err
 			}
@@ -67,187 +63,48 @@ func validateRequiredFlags(cmd *cobra.Command) error {
 	return nil
 }
 
-func newClient(apiEndpoint string) (*hyperfleet.ClientWithResponses, error) {
-	if apiEndpoint == "" {
-		return nil, fmt.Errorf("--api-endpoint is required (or set GCPHCPCTL_API_ENDPOINT or api_endpoint in config)")
-	}
-	return hyperfleet.NewAPIClient(apiEndpoint, auth.NewTokenSource())
+func newClient(apiEndpoint, project string) (*platformapi.Client, error) {
+	return platformapi.NewClient(apiEndpoint, project, auth.NewTokenSource())
 }
 
-func clientFromCmd(cmd *cobra.Command) *hyperfleet.ClientWithResponses {
-	client, ok := cmd.Context().Value(clientKey).(*hyperfleet.ClientWithResponses)
+func clientFromCmd(cmd *cobra.Command) *platformapi.Client {
+	client, ok := cmd.Context().Value(clientKey).(*platformapi.Client)
 	if !ok {
-		panic("bug: clientFromCmd called before PersistentPreRunE set the HyperFleet client")
+		panic("bug: clientFromCmd called before PersistentPreRunE set the platform API client")
 	}
 	return client
 }
 
-// resolveCluster looks up a cluster by name or ID, reusing the same
-// pattern as the cluster package.
-func resolveCluster(ctx context.Context, client *hyperfleet.ClientWithResponses, ref string) (*hyperfleet.Cluster, error) {
-	resp, err := client.GetClusterByIdWithResponse(ctx, ref, nil)
+// resolveNodePool looks up a nodepool by name within the client's project namespace.
+func resolveNodePool(ctx context.Context, client *platformapi.Client, name string) (*gcpv1.NodePool, error) {
+	np, err := client.NodePools().Get(ctx, client.Namespace(), name)
 	if err != nil {
-		return nil, fmt.Errorf("looking up cluster %q: %w", ref, err)
+		return nil, fmt.Errorf("looking up nodepool %q in project %q: %w", name, client.Project(), err)
 	}
-	if resp.JSON200 != nil {
-		return resp.JSON200, nil
-	}
-	if resp.HTTPResponse == nil || resp.HTTPResponse.StatusCode != http.StatusNotFound {
-		return nil, fmt.Errorf("looking up cluster %q: %s", ref, formatError(resp.HTTPResponse, resp.Body))
-	}
-
-	escapedRef := strings.ReplaceAll(ref, "'", "\\'")
-	search := fmt.Sprintf("name = '%s'", escapedRef)
-	var page int32 = 1
-	var pageSize int32 = 100
-	for {
-		params := &hyperfleet.GetClustersParams{
-			Search:   &search,
-			Page:     &page,
-			PageSize: &pageSize,
-		}
-		listResp, err := client.GetClustersWithResponse(ctx, params)
-		if err != nil {
-			return nil, fmt.Errorf("listing clusters: %w", err)
-		}
-		if listResp.JSON200 == nil {
-			return nil, fmt.Errorf("listing clusters: %s", formatError(listResp.HTTPResponse, listResp.Body))
-		}
-		for i := range listResp.JSON200.Items {
-			c := &listResp.JSON200.Items[i]
-			if c.Name == ref {
-				return c, nil
-			}
-		}
-		if len(listResp.JSON200.Items) == 0 || page*pageSize >= listResp.JSON200.Total {
-			break
-		}
-		page++
-	}
-	return nil, fmt.Errorf("cluster %q not found", ref)
+	return np, nil
 }
 
-// resolveNodePool looks up a nodepool by name or ID. It uses the
-// Search TSL filter to narrow results server-side, then scans
-// page-by-page to avoid fetching the entire nodepool list.
-func resolveNodePool(ctx context.Context, client *hyperfleet.ClientWithResponses, ref string) (*hyperfleet.NodePool, string, error) {
-	escapedRef := strings.ReplaceAll(ref, "'", "\\'")
-	search := fmt.Sprintf("name = '%s' or id = '%s'", escapedRef, escapedRef)
-	var page int32 = 1
-	var pageSize int32 = 100
-
-	for {
-		params := &hyperfleet.GetNodePoolsParams{
-			Search:   &search,
-			Page:     &page,
-			PageSize: &pageSize,
-		}
-		resp, err := client.GetNodePoolsWithResponse(ctx, params)
-		if err != nil {
-			return nil, "", fmt.Errorf("listing nodepools: %w", err)
-		}
-		if resp.JSON200 == nil {
-			return nil, "", fmt.Errorf("listing nodepools: %s", formatError(resp.HTTPResponse, resp.Body))
-		}
-
-		for i := range resp.JSON200.Items {
-			np := &resp.JSON200.Items[i]
-			if ptrStr(np.Id) == ref || np.Name == ref {
-				clusterID := ptrStr(np.OwnerReferences.Id)
-				if clusterID == "" {
-					return nil, "", fmt.Errorf("nodepool %q has no owner cluster reference", ref)
-				}
-				return np, clusterID, nil
-			}
-		}
-
-		if int32(len(resp.JSON200.Items)) < pageSize {
-			break
-		}
-		page++
+// fetchNodePools retrieves nodepools, optionally filtered by cluster name.
+func fetchNodePools(ctx context.Context, client *platformapi.Client, clusterName string) ([]gcpv1.NodePool, error) {
+	list, err := client.NodePools().List(ctx, client.Namespace())
+	if err != nil {
+		return nil, fmt.Errorf("listing nodepools: %w", err)
 	}
-	return nil, "", fmt.Errorf("nodepool %q not found", ref)
+
+	if clusterName == "" {
+		return list.Items, nil
+	}
+
+	var filtered []gcpv1.NodePool
+	for _, np := range list.Items {
+		if np.Spec.ClusterID == clusterName {
+			filtered = append(filtered, np)
+		}
+	}
+	return filtered, nil
 }
 
-// fetchNodePools retrieves all nodepools matching the given parameters,
-// handling pagination automatically.
-func fetchNodePools(ctx context.Context, client *hyperfleet.ClientWithResponses, clusterID string) ([]hyperfleet.NodePool, error) {
-	var all []hyperfleet.NodePool
-	var page int32 = 1
-	var pageSize int32 = 100
-
-	for {
-		if clusterID != "" {
-			params := &hyperfleet.GetNodePoolsByClusterIdParams{
-				Page:     &page,
-				PageSize: &pageSize,
-			}
-			resp, err := client.GetNodePoolsByClusterIdWithResponse(ctx, clusterID, params)
-			if err != nil {
-				return nil, fmt.Errorf("listing nodepools: %w", err)
-			}
-			if resp.JSON200 == nil {
-				return nil, fmt.Errorf("listing nodepools: %s", formatError(resp.HTTPResponse, resp.Body))
-			}
-			all = append(all, resp.JSON200.Items...)
-			if len(resp.JSON200.Items) == 0 || int32(len(resp.JSON200.Items)) < pageSize || int32(len(all)) >= resp.JSON200.Total {
-				break
-			}
-		} else {
-			params := &hyperfleet.GetNodePoolsParams{
-				Page:     &page,
-				PageSize: &pageSize,
-			}
-			resp, err := client.GetNodePoolsWithResponse(ctx, params)
-			if err != nil {
-				return nil, fmt.Errorf("listing nodepools: %w", err)
-			}
-			if resp.JSON200 == nil {
-				return nil, fmt.Errorf("listing nodepools: %s", formatError(resp.HTTPResponse, resp.Body))
-			}
-			all = append(all, resp.JSON200.Items...)
-			if len(resp.JSON200.Items) == 0 || int32(len(resp.JSON200.Items)) < pageSize || int32(len(all)) >= resp.JSON200.Total {
-				break
-			}
-		}
-		page++
-	}
-	return all, nil
-}
-
-func formatError(resp *http.Response, body []byte) string {
-	msg := string(body)
-	if len(msg) > 500 {
-		msg = msg[:500] + "..."
-	}
-	if resp == nil {
-		if msg == "" {
-			return "HTTP response unavailable"
-		}
-		return fmt.Sprintf("HTTP response unavailable: %s", msg)
-	}
-	return fmt.Sprintf("HTTP %d: %s", resp.StatusCode, msg)
-}
-
-func ptrStr(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-func strPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func intPtr(i int) *int {
-	return &i
-}
-
-func printNodePool(w io.Writer, np *hyperfleet.NodePool, format string) error {
+func printNodePool(w io.Writer, np *gcpv1.NodePool, format string) error {
 	switch output.ParseFormat(format) {
 	case output.FormatJSON:
 		return output.PrintJSON(w, np)
@@ -259,55 +116,53 @@ func printNodePool(w io.Writer, np *hyperfleet.NodePool, format string) error {
 	bw := bufio.NewWriter(w)
 
 	fmt.Fprintf(bw, "Name:         %s\n", np.Name)
-	fmt.Fprintf(bw, "ID:           %s\n", ptrStr(np.Id))
-	fmt.Fprintf(bw, "Cluster:      %s\n", ptrStr(np.OwnerReferences.Id))
+	fmt.Fprintf(bw, "ID:           %s\n", np.UID)
+	fmt.Fprintf(bw, "Cluster:      %s\n", np.Spec.ClusterID)
 	fmt.Fprintf(bw, "Generation:   %d\n", np.Generation)
-	if np.Spec.Replicas != nil {
-		fmt.Fprintf(bw, "Replicas:     %d\n", *np.Spec.Replicas)
+	if np.Spec.NodeCount != nil {
+		fmt.Fprintf(bw, "Replicas:     %d\n", *np.Spec.NodeCount)
 	}
-	fmt.Fprintf(bw, "Instance:     %s\n", ptrStr(np.Spec.Platform.Gcp.InstanceType))
-	if np.Spec.Platform.Gcp.RootVolume != nil {
-		if np.Spec.Platform.Gcp.RootVolume.Size != nil {
-			fmt.Fprintf(bw, "Disk Size:    %d GB\n", *np.Spec.Platform.Gcp.RootVolume.Size)
+	if np.Spec.Platform.GCP != nil {
+		if np.Spec.Platform.GCP.MachineType != "" {
+			fmt.Fprintf(bw, "Instance:     %s\n", np.Spec.Platform.GCP.MachineType)
 		}
-		if np.Spec.Platform.Gcp.RootVolume.Type != nil {
-			fmt.Fprintf(bw, "Disk Type:    %s\n", *np.Spec.Platform.Gcp.RootVolume.Type)
+		if np.Spec.Platform.GCP.DiskSizeGB > 0 {
+			fmt.Fprintf(bw, "Disk Size:    %d GB\n", np.Spec.Platform.GCP.DiskSizeGB)
+		}
+		if np.Spec.Platform.GCP.DiskType != "" {
+			fmt.Fprintf(bw, "Disk Type:    %s\n", np.Spec.Platform.GCP.DiskType)
+		}
+		if np.Spec.Platform.GCP.Zone != "" {
+			fmt.Fprintf(bw, "Zone:         %s\n", np.Spec.Platform.GCP.Zone)
 		}
 	}
-	if np.Spec.Platform.Gcp.Zone != nil {
-		fmt.Fprintf(bw, "Zone:         %s\n", *np.Spec.Platform.Gcp.Zone)
-	}
-	if np.Spec.Release != nil {
-		if np.Spec.Release.Version != nil {
-			fmt.Fprintf(bw, "Version:      %s\n", *np.Spec.Release.Version)
-		}
-		if np.Spec.Release.ChannelGroup != nil {
-			fmt.Fprintf(bw, "Channel:      %s\n", *np.Spec.Release.ChannelGroup)
-		}
+	if np.Spec.Release.Version != "" {
+		fmt.Fprintf(bw, "Version:      %s\n", np.Spec.Release.Version)
 	}
 	fmt.Fprintf(bw, "Status:       %s\n", nodePoolStatusDetail(np))
-	if !np.CreatedTime.IsZero() {
-		fmt.Fprintf(bw, "CreatedAt:    %s\n", np.CreatedTime.Format("2006-01-02T15:04:05Z"))
+	if !np.CreationTimestamp.IsZero() {
+		fmt.Fprintf(bw, "CreatedAt:    %s\n", np.CreationTimestamp.Format("2006-01-02T15:04:05Z"))
 	}
-	if np.CreatedBy != "" {
-		fmt.Fprintf(bw, "CreatedBy:    %s\n", string(np.CreatedBy))
-	}
-	if np.DeletedTime != nil {
-		fmt.Fprintf(bw, "DeletedAt:    %s\n", np.DeletedTime.Format("2006-01-02T15:04:05Z"))
-	}
-	if np.DeletedBy != nil {
-		fmt.Fprintf(bw, "DeletedBy:    %s\n", string(*np.DeletedBy))
+
+	if np.DeletionTimestamp != nil {
+		fmt.Fprintf(bw, "DeletedAt:    %s\n", np.DeletionTimestamp.Format("2006-01-02T15:04:05Z"))
 	}
 
 	if len(np.Status.Conditions) > 0 {
 		fmt.Fprintln(bw, "\nConditions:")
-		t := output.NewTable(bw, "TYPE", "STATUS", "GEN", "REASON", "MESSAGE")
+		t := output.NewTable(bw, "TYPE", "STATUS", "REASON", "MESSAGE", "LAST TRANSITION")
 		for _, cond := range np.Status.Conditions {
-			msg := ptrStr(cond.Message)
+			msg := cond.Message
 			if len(msg) > 80 {
 				msg = msg[:80] + "..."
 			}
-			t.AddRow(cond.Type, string(cond.Status), fmt.Sprintf("%d", cond.ObservedGeneration), ptrStr(cond.Reason), msg)
+			t.AddRow(
+				cond.Type,
+				string(cond.Status),
+				cond.Reason,
+				msg,
+				cond.LastTransitionTime.Format("2006-01-02T15:04:05Z"),
+			)
 		}
 		if err := t.Flush(); err != nil {
 			return err
@@ -317,7 +172,7 @@ func printNodePool(w io.Writer, np *hyperfleet.NodePool, format string) error {
 	return bw.Flush()
 }
 
-func findCondition(conditions []hyperfleet.ResourceCondition, condType string) *hyperfleet.ResourceCondition {
+func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
 	for i := range conditions {
 		if conditions[i].Type == condType {
 			return &conditions[i]
@@ -327,13 +182,13 @@ func findCondition(conditions []hyperfleet.ResourceCondition, condType string) *
 }
 
 // nodePoolStatus returns a short human-friendly phase for table/list output.
-func nodePoolStatus(np *hyperfleet.NodePool) string {
+func nodePoolStatus(np *gcpv1.NodePool) string {
 	phase, _ := deriveNodePoolStatus(np)
 	return phase
 }
 
 // nodePoolStatusDetail returns a phase with parenthetical explanation for get output.
-func nodePoolStatusDetail(np *hyperfleet.NodePool) string {
+func nodePoolStatusDetail(np *gcpv1.NodePool) string {
 	phase, detail := deriveNodePoolStatus(np)
 	if detail == "" {
 		return phase
@@ -341,8 +196,8 @@ func nodePoolStatusDetail(np *hyperfleet.NodePool) string {
 	return fmt.Sprintf("%s (%s)", phase, detail)
 }
 
-func deriveNodePoolStatus(np *hyperfleet.NodePool) (phase, detail string) {
-	if np.DeletedTime != nil {
+func deriveNodePoolStatus(np *gcpv1.NodePool) (phase, detail string) {
+	if np.DeletionTimestamp != nil {
 		return "Deleting", ""
 	}
 
@@ -354,55 +209,52 @@ func deriveNodePoolStatus(np *hyperfleet.NodePool) (phase, detail string) {
 	reconciled := findCondition(conditions, "Reconciled")
 	lastKnown := findCondition(conditions, "LastKnownReconciled")
 
-	if reconciled != nil && reconciled.Status == hyperfleet.ResourceConditionStatusTrue {
+	if reconciled != nil && reconciled.Status == metav1.ConditionTrue {
 		return "Ready", ""
 	}
 
-	if reconciled != nil && reconciled.Status == hyperfleet.ResourceConditionStatusFalse {
-		if lastKnown != nil && lastKnown.Status == hyperfleet.ResourceConditionStatusTrue {
+	if reconciled != nil && reconciled.Status == metav1.ConditionFalse {
+		if lastKnown != nil && lastKnown.Status == metav1.ConditionTrue {
 			return "Degraded", npConditionSummary(reconciled, np.Generation)
 		}
-
 		return "Progressing", ""
 	}
 
 	return "Progressing", ""
 }
 
-func npConditionSummary(cond *hyperfleet.ResourceCondition, generation int32) string {
-	reason := ptrStr(cond.Reason)
-	msg := ptrStr(cond.Message)
-
+func npConditionSummary(cond *metav1.Condition, generation int64) string {
 	if cond.ObservedGeneration < generation && cond.ObservedGeneration > 0 {
 		return fmt.Sprintf("adapters finalizing generation %d", generation)
 	}
 
-	if msg != "" {
+	if cond.Message != "" {
+		msg := cond.Message
 		if len(msg) > 60 {
 			msg = msg[:60] + "..."
 		}
 		return msg
 	}
-	return reason
+	return cond.Reason
 }
 
-func truncateID(id string) string {
-	if len(id) > 12 {
-		return id[:12] + "..."
-	}
-	return id
-}
-
-func releaseVersion(np *hyperfleet.NodePool) string {
-	if np.Spec.Release != nil && np.Spec.Release.Version != nil && *np.Spec.Release.Version != "" {
-		return *np.Spec.Release.Version
+func releaseVersion(np *gcpv1.NodePool) string {
+	if np.Spec.Release.Version != "" {
+		return np.Spec.Release.Version
 	}
 	return "<none>"
 }
 
-func replicas(np *hyperfleet.NodePool) string {
-	if np.Spec.Replicas != nil {
-		return fmt.Sprintf("%d", *np.Spec.Replicas)
+func nodeCount(np *gcpv1.NodePool) string {
+	if np.Spec.NodeCount != nil {
+		return fmt.Sprintf("%d", *np.Spec.NodeCount)
 	}
 	return "-"
+}
+
+func machineType(np *gcpv1.NodePool) string {
+	if np.Spec.Platform.GCP != nil {
+		return np.Spec.Platform.GCP.MachineType
+	}
+	return ""
 }

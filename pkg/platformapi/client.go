@@ -14,6 +14,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 )
 
@@ -102,6 +103,11 @@ func (c *Client) Clusters() ClusterInterface {
 	return &clusterClient{restClient: c.restClient}
 }
 
+// NodePools returns a NodePoolInterface for performing nodepool operations.
+func (c *Client) NodePools() NodePoolInterface {
+	return &nodePoolClient{restClient: c.restClient}
+}
+
 // ClusterInterface defines operations on Cluster resources.
 type ClusterInterface interface {
 	Create(ctx context.Context, namespace string, cluster *gcpv1.Cluster) (*gcpv1.Cluster, error)
@@ -163,6 +169,72 @@ func (c *Client) ResolveCluster(ctx context.Context, name string) (*gcpv1.Cluste
 		return nil, fmt.Errorf("looking up cluster %q in project %q: %w", name, c.project, err)
 	}
 	return cluster, nil
+}
+
+// NodePoolInterface defines operations on NodePool resources.
+type NodePoolInterface interface {
+	Create(ctx context.Context, namespace string, nodePool *gcpv1.NodePool) (*gcpv1.NodePool, error)
+	Get(ctx context.Context, namespace, name string) (*gcpv1.NodePool, error)
+	List(ctx context.Context, namespace string) (*gcpv1.NodePoolList, error)
+	Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.NodePool, error)
+	Delete(ctx context.Context, namespace, name string) error
+}
+
+type nodePoolClient struct {
+	restClient rest.Interface
+}
+
+func (n *nodePoolClient) Create(ctx context.Context, namespace string, nodePool *gcpv1.NodePool) (*gcpv1.NodePool, error) {
+	result := &gcpv1.NodePool{}
+	err := n.restClient.Post().
+		Namespace(namespace).
+		Resource("nodepools").
+		Body(nodePool).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (n *nodePoolClient) Get(ctx context.Context, namespace, name string) (*gcpv1.NodePool, error) {
+	result := &gcpv1.NodePool{}
+	err := n.restClient.Get().
+		Namespace(namespace).
+		Resource("nodepools").
+		Name(name).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (n *nodePoolClient) List(ctx context.Context, namespace string) (*gcpv1.NodePoolList, error) {
+	result := &gcpv1.NodePoolList{}
+	req := n.restClient.Get().Resource("nodepools")
+	if namespace != "" {
+		req = req.Namespace(namespace)
+	}
+	err := req.Do(ctx).Into(result)
+	return result, err
+}
+
+func (n *nodePoolClient) Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.NodePool, error) {
+	result := &gcpv1.NodePool{}
+	err := n.restClient.Patch(types.MergePatchType).
+		Namespace(namespace).
+		Resource("nodepools").
+		Name(name).
+		Body(patchData).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (n *nodePoolClient) Delete(ctx context.Context, namespace, name string) error {
+	return n.restClient.Delete().
+		Namespace(namespace).
+		Resource("nodepools").
+		Name(name).
+		Do(ctx).
+		Error()
 }
 
 // NamespaceForProject returns the namespace for a given GCP project ID.
