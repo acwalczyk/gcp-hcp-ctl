@@ -50,9 +50,9 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.instanceType, "instance-type", "n2-standard-4", "GCE machine type")
 	cmd.Flags().Int64Var(&opts.diskSize, "disk-size", 100, "Boot disk size in GB")
 	cmd.Flags().StringVar(&opts.diskType, "disk-type", "pd-balanced", "Boot disk type: pd-standard, pd-ssd, pd-balanced")
-	cmd.Flags().StringVar(&opts.zone, "zone", "", "GCP zone (defaults to cluster region + \"-a\")")
-	cmd.Flags().StringVar(&opts.version, "version", "", "OCP version (e.g. 4.22.0-rc.5); defaults to cluster version")
-	cmd.Flags().StringVar(&opts.channelGroup, "channel-group", "", "Channel group: stable, fast, candidate, eus; defaults to cluster channel")
+	cmd.Flags().StringVar(&opts.zone, "zone", "", "GCP zone (optional; selected automatically from the cluster region when omitted)")
+	cmd.Flags().StringVar(&opts.version, "version", "", "OCP version (e.g. 4.22.0-rc.5) (required)")
+	cmd.Flags().StringVar(&opts.channelGroup, "channel-group", "stable", "Channel group: stable, fast, candidate, eus")
 	cmd.Flags().StringVarP(&opts.outputFmt, "output", "o", "text", "Output format: text, json, yaml")
 
 	_ = cmd.MarkFlagRequired("cluster")
@@ -61,6 +61,25 @@ func newCreateCmd() *cobra.Command {
 }
 
 func (o *createOptions) run(cmd *cobra.Command, npName string) error {
+	if err := o.validate(); err != nil {
+		return err
+	}
+
+	client := clientFromCmd(cmd)
+	ctx := cmd.Context()
+	ns := client.Namespace()
+
+	created, err := client.NodePools().Create(ctx, ns, o.buildNodePool(npName))
+	if err != nil {
+		return fmt.Errorf("creating nodepool: %w", err)
+	}
+
+	return printNodePool(cmd.OutOrStdout(), created, o.outputFmt)
+}
+
+// validate checks the create options against constraints the platform-api-server
+// enforces, surfacing friendly errors before the request is sent.
+func (o *createOptions) validate() error {
 	switch o.diskType {
 	case "pd-standard", "pd-ssd", "pd-balanced":
 	default:
@@ -69,11 +88,21 @@ func (o *createOptions) run(cmd *cobra.Command, npName string) error {
 	if o.replicas < 0 {
 		return fmt.Errorf("--replicas must be non-negative")
 	}
+	switch o.channelGroup {
+	case "stable", "fast", "candidate", "eus":
+	default:
+		return fmt.Errorf("--channel-group must be one of: stable, fast, candidate, eus")
+	}
+	// The platform-api-server requires spec.release.version and channelGroup
+	// (both minLength=1, no server-side defaulting from the parent cluster).
+	if o.version == "" {
+		return fmt.Errorf("--version is required (e.g. --version 4.22.0)")
+	}
+	return nil
+}
 
-	client := clientFromCmd(cmd)
-	ctx := cmd.Context()
-	ns := client.Namespace()
-
+// buildNodePool assembles the NodePool object sent to the platform-api-server.
+func (o *createOptions) buildNodePool(npName string) *gcpv1.NodePool {
 	nodePool := &gcpv1.NodePool{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: gcpv1.GroupVersion.String(),
@@ -104,10 +133,5 @@ func (o *createOptions) run(cmd *cobra.Command, npName string) error {
 		nodePool.Spec.Platform.GCP.Zone = o.zone
 	}
 
-	created, err := client.NodePools().Create(ctx, ns, nodePool)
-	if err != nil {
-		return fmt.Errorf("creating nodepool: %w", err)
-	}
-
-	return printNodePool(cmd.OutOrStdout(), created, o.outputFmt)
+	return nodePool
 }

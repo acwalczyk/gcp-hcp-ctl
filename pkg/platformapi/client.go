@@ -171,6 +171,15 @@ func (c *Client) ResolveCluster(ctx context.Context, name string) (*gcpv1.Cluste
 	return cluster, nil
 }
 
+// ResolveNodePool finds a nodepool by name within the client's project namespace.
+func (c *Client) ResolveNodePool(ctx context.Context, name string) (*gcpv1.NodePool, error) {
+	nodePool, err := c.NodePools().Get(ctx, c.Namespace(), name)
+	if err != nil {
+		return nil, fmt.Errorf("looking up nodepool %q in project %q: %w", name, c.project, err)
+	}
+	return nodePool, nil
+}
+
 // NodePoolInterface defines operations on NodePool resources.
 type NodePoolInterface interface {
 	Create(ctx context.Context, namespace string, nodePool *gcpv1.NodePool) (*gcpv1.NodePool, error)
@@ -208,11 +217,11 @@ func (n *nodePoolClient) Get(ctx context.Context, namespace, name string) (*gcpv
 
 func (n *nodePoolClient) List(ctx context.Context, namespace string) (*gcpv1.NodePoolList, error) {
 	result := &gcpv1.NodePoolList{}
-	req := n.restClient.Get().Resource("nodepools")
-	if namespace != "" {
-		req = req.Namespace(namespace)
-	}
-	err := req.Do(ctx).Into(result)
+	err := n.restClient.Get().
+		Namespace(namespace).
+		Resource("nodepools").
+		Do(ctx).
+		Into(result)
 	return result, err
 }
 

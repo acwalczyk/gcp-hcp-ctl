@@ -31,7 +31,7 @@ func newDeleteCmd() *cobra.Command {
 				return fmt.Errorf("deleting nodepool %s: %w", npName, err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Nodepool %s deletion initiated.\n", npName)
+			fmt.Fprintf(cmd.OutOrStdout(), "Nodepool %s (project: %s) deletion initiated.\n", npName, client.Project())
 			return nil
 		},
 	}

@@ -39,8 +39,11 @@ func newScaleCmd() *cobra.Command {
 			ctx := cmd.Context()
 			npName := args[0]
 
-			patch := map[string]interface{}{
-				"spec": map[string]interface{}{
+			// A JSON merge patch only touches spec.nodeCount; all other spec
+			// fields (platform, release, etc.) are left untouched server-side,
+			// so we don't need to fetch and resend the full spec.
+			patch := map[string]any{
+				"spec": map[string]any{
 					"nodeCount": replicaCount,
 				},
 			}

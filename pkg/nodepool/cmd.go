@@ -75,33 +75,30 @@ func clientFromCmd(cmd *cobra.Command) *platformapi.Client {
 	return client
 }
 
-// resolveNodePool looks up a nodepool by name within the client's project namespace.
-func resolveNodePool(ctx context.Context, client *platformapi.Client, name string) (*gcpv1.NodePool, error) {
-	np, err := client.NodePools().Get(ctx, client.Namespace(), name)
-	if err != nil {
-		return nil, fmt.Errorf("looking up nodepool %q in project %q: %w", name, client.Project(), err)
-	}
-	return np, nil
-}
-
 // fetchNodePools retrieves nodepools, optionally filtered by cluster name.
+// It fetches the full namespace list in a single call (no continue-token
+// pagination), which is sufficient for the per-project scale of the platform API.
 func fetchNodePools(ctx context.Context, client *platformapi.Client, clusterName string) ([]gcpv1.NodePool, error) {
 	list, err := client.NodePools().List(ctx, client.Namespace())
 	if err != nil {
 		return nil, fmt.Errorf("listing nodepools: %w", err)
 	}
+	return filterNodePoolsByCluster(list.Items, clusterName), nil
+}
 
+// filterNodePoolsByCluster returns pools whose Spec.ClusterID matches
+// clusterName. An empty clusterName returns all pools unchanged.
+func filterNodePoolsByCluster(pools []gcpv1.NodePool, clusterName string) []gcpv1.NodePool {
 	if clusterName == "" {
-		return list.Items, nil
+		return pools
 	}
-
 	var filtered []gcpv1.NodePool
-	for _, np := range list.Items {
+	for _, np := range pools {
 		if np.Spec.ClusterID == clusterName {
 			filtered = append(filtered, np)
 		}
 	}
-	return filtered, nil
+	return filtered
 }
 
 func printNodePool(w io.Writer, np *gcpv1.NodePool, format string) error {
@@ -253,8 +250,8 @@ func nodeCount(np *gcpv1.NodePool) string {
 }
 
 func machineType(np *gcpv1.NodePool) string {
-	if np.Spec.Platform.GCP != nil {
+	if np.Spec.Platform.GCP != nil && np.Spec.Platform.GCP.MachineType != "" {
 		return np.Spec.Platform.GCP.MachineType
 	}
-	return ""
+	return "-"
 }

@@ -40,8 +40,8 @@ func newListCmd() *cobra.Command {
 			}
 
 			if len(allNodePools) == 0 {
-				fmt.Fprintln(out, "No nodepools found.")
-				return nil
+				_, err := fmt.Fprintln(out, "No nodepools found.")
+				return err
 			}
 
 			t := output.NewTable(out, "NAME", "CLUSTER", "REPLICAS", "INSTANCE", "VERSION", "STATUS", "AGE")

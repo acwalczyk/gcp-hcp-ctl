@@ -371,14 +371,14 @@ func TestMachineType(t *testing.T) {
 		}
 	})
 
-	t.Run("When GCP platform is nil it should return empty string", func(t *testing.T) {
+	t.Run("When GCP platform is nil it should return dash", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			Spec: gcpv1.NodePoolSpec{
 				Platform: gcpv1.NodePoolPlatformSpec{},
 			},
 		}
-		if got := machineType(np); got != "" {
-			t.Errorf("expected empty string, got %q", got)
+		if got := machineType(np); got != "-" {
+			t.Errorf("expected '-', got %q", got)
 		}
 	})
 }

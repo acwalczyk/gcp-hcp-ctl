@@ -19,7 +19,7 @@ func newGetCmd() *cobra.Command {
 			return cobra.ExactArgs(1)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			np, err := resolveNodePool(cmd.Context(), clientFromCmd(cmd), args[0])
+			np, err := clientFromCmd(cmd).ResolveNodePool(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
