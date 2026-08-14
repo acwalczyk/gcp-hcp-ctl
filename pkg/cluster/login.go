@@ -126,12 +126,19 @@ func resolveClusterEndpoint(ctx context.Context, client *platformapi.Client, clu
 	}
 
 	endpoint := hcr.APIEndpoint
+
+	// Reject explicit non-HTTPS schemes (defensive check in case gecko behavior changes)
+	if strings.HasPrefix(endpoint, "http://") {
+		return "", clusterName, fmt.Errorf("cluster returned HTTP endpoint %q: HTTPS required", hcr.APIEndpoint)
+	}
+
+	// Add https:// prefix if not present (gecko currently returns bare hostnames)
 	if !strings.HasPrefix(endpoint, "https://") {
 		endpoint = "https://" + endpoint
 	}
 
 	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
 		return "", clusterName, fmt.Errorf("cluster returned invalid endpoint %q: must be a valid HTTPS URL", hcr.APIEndpoint)
 	}
 

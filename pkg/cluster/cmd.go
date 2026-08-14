@@ -11,6 +11,7 @@ import (
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -172,15 +173,6 @@ func printCluster(w io.Writer, c *gcpv1.Cluster, format string) error {
 	return bw.Flush()
 }
 
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == condType {
-			return &conditions[i]
-		}
-	}
-	return nil
-}
-
 func clusterStatus(c *gcpv1.Cluster) string {
 	phase, _ := deriveClusterStatus(c)
 	return phase
@@ -204,7 +196,7 @@ func deriveClusterStatus(c *gcpv1.Cluster) (phase, detail string) {
 		return "Pending", ""
 	}
 
-	ready := findCondition(conditions, "Ready")
+	ready := meta.FindStatusCondition(conditions, "Ready")
 
 	if ready != nil && ready.Status == metav1.ConditionTrue {
 		return "Ready", ""

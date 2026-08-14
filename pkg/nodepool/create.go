@@ -50,7 +50,7 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.instanceType, "instance-type", "n2-standard-4", "GCE machine type")
 	cmd.Flags().Int64Var(&opts.diskSize, "disk-size", 100, "Boot disk size in GB")
 	cmd.Flags().StringVar(&opts.diskType, "disk-type", "pd-balanced", "Boot disk type: pd-standard, pd-ssd, pd-balanced")
-	cmd.Flags().StringVar(&opts.zone, "zone", "", "GCP zone (optional; selected automatically from the cluster region when omitted)")
+	cmd.Flags().StringVar(&opts.zone, "zone", "", "GCP zone (optional)")
 	cmd.Flags().StringVar(&opts.version, "version", "", "OCP version (e.g. 4.22.0-rc.5) (required)")
 	cmd.Flags().StringVar(&opts.channelGroup, "channel-group", "stable", "Channel group: stable, fast, candidate, eus")
 	cmd.Flags().StringVarP(&opts.outputFmt, "output", "o", "text", "Output format: text, json, yaml")
@@ -84,6 +84,9 @@ func (o *createOptions) validate() error {
 	case "pd-standard", "pd-ssd", "pd-balanced":
 	default:
 		return fmt.Errorf("--disk-type must be one of: pd-standard, pd-ssd, pd-balanced")
+	}
+	if o.diskSize <= 0 {
+		return fmt.Errorf("--disk-size must be greater than 0")
 	}
 	if o.replicas < 0 {
 		return fmt.Errorf("--replicas must be non-negative")

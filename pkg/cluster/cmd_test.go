@@ -5,6 +5,7 @@ import (
 	"time"
 
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -178,7 +179,7 @@ func TestFindCondition(t *testing.T) {
 			{Type: "Ready", Status: metav1.ConditionTrue},
 			{Type: "Available", Status: metav1.ConditionFalse},
 		}
-		got := findCondition(conditions, "Available")
+		got := meta.FindStatusCondition(conditions, "Available")
 		if got == nil {
 			t.Fatal("expected non-nil condition")
 		}
@@ -191,13 +192,13 @@ func TestFindCondition(t *testing.T) {
 		conditions := []metav1.Condition{
 			{Type: "Ready", Status: metav1.ConditionTrue},
 		}
-		if got := findCondition(conditions, "Missing"); got != nil {
+		if got := meta.FindStatusCondition(conditions, "Missing"); got != nil {
 			t.Errorf("expected nil, got %v", got)
 		}
 	})
 
 	t.Run("When conditions list is empty it should return nil", func(t *testing.T) {
-		if got := findCondition(nil, "Ready"); got != nil {
+		if got := meta.FindStatusCondition(nil, "Ready"); got != nil {
 			t.Errorf("expected nil, got %v", got)
 		}
 	})

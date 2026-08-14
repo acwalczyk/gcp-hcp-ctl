@@ -6,6 +6,7 @@ import (
 	"time"
 
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -200,7 +201,7 @@ func TestFindCondition(t *testing.T) {
 			{Type: "Available", Status: metav1.ConditionTrue},
 			{Type: "Reconciled", Status: metav1.ConditionFalse},
 		}
-		got := findCondition(conditions, "Reconciled")
+		got := meta.FindStatusCondition(conditions, "Reconciled")
 		if got == nil {
 			t.Fatal("expected non-nil condition")
 		}
@@ -213,13 +214,13 @@ func TestFindCondition(t *testing.T) {
 		conditions := []metav1.Condition{
 			{Type: "Available", Status: metav1.ConditionTrue},
 		}
-		if got := findCondition(conditions, "Reconciled"); got != nil {
+		if got := meta.FindStatusCondition(conditions, "Reconciled"); got != nil {
 			t.Errorf("expected nil, got %v", got)
 		}
 	})
 
 	t.Run("When conditions slice is empty it should return nil", func(t *testing.T) {
-		if got := findCondition(nil, "Reconciled"); got != nil {
+		if got := meta.FindStatusCondition(nil, "Reconciled"); got != nil {
 			t.Errorf("expected nil, got %v", got)
 		}
 	})
@@ -375,6 +376,19 @@ func TestMachineType(t *testing.T) {
 		np := &gcpv1.NodePool{
 			Spec: gcpv1.NodePoolSpec{
 				Platform: gcpv1.NodePoolPlatformSpec{},
+			},
+		}
+		if got := machineType(np); got != "-" {
+			t.Errorf("expected '-', got %q", got)
+		}
+	})
+
+	t.Run("When GCP platform is set but MachineType is empty it should return dash", func(t *testing.T) {
+		np := &gcpv1.NodePool{
+			Spec: gcpv1.NodePoolSpec{
+				Platform: gcpv1.NodePoolPlatformSpec{
+					GCP: &gcpv1.GCPNodePoolPlatform{MachineType: ""},
+				},
 			},
 		}
 		if got := machineType(np); got != "-" {

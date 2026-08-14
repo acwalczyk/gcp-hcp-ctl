@@ -11,6 +11,7 @@ import (
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -86,13 +87,23 @@ func fetchNodePools(ctx context.Context, client *platformapi.Client, clusterName
 	return filterNodePoolsByCluster(list.Items, clusterName), nil
 }
 
+// truncateString truncates a string to maxRunes Unicode code points.
+// Uses rune-based slicing to avoid splitting multi-byte UTF-8 characters.
+func truncateString(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
 // filterNodePoolsByCluster returns pools whose Spec.ClusterID matches
 // clusterName. An empty clusterName returns all pools unchanged.
 func filterNodePoolsByCluster(pools []gcpv1.NodePool, clusterName string) []gcpv1.NodePool {
 	if clusterName == "" {
 		return pools
 	}
-	var filtered []gcpv1.NodePool
+	filtered := make([]gcpv1.NodePool, 0, len(pools))
 	for _, np := range pools {
 		if np.Spec.ClusterID == clusterName {
 			filtered = append(filtered, np)
@@ -149,10 +160,7 @@ func printNodePool(w io.Writer, np *gcpv1.NodePool, format string) error {
 		fmt.Fprintln(bw, "\nConditions:")
 		t := output.NewTable(bw, "TYPE", "STATUS", "REASON", "MESSAGE", "LAST TRANSITION")
 		for _, cond := range np.Status.Conditions {
-			msg := cond.Message
-			if len(msg) > 80 {
-				msg = msg[:80] + "..."
-			}
+			msg := truncateString(cond.Message, 80)
 			t.AddRow(
 				cond.Type,
 				string(cond.Status),
@@ -167,15 +175,6 @@ func printNodePool(w io.Writer, np *gcpv1.NodePool, format string) error {
 	}
 
 	return bw.Flush()
-}
-
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == condType {
-			return &conditions[i]
-		}
-	}
-	return nil
 }
 
 // nodePoolStatus returns a short human-friendly phase for table/list output.
@@ -203,8 +202,8 @@ func deriveNodePoolStatus(np *gcpv1.NodePool) (phase, detail string) {
 		return "Pending", ""
 	}
 
-	reconciled := findCondition(conditions, "Reconciled")
-	lastKnown := findCondition(conditions, "LastKnownReconciled")
+	reconciled := meta.FindStatusCondition(conditions, "Reconciled")
+	lastKnown := meta.FindStatusCondition(conditions, "LastKnownReconciled")
 
 	if reconciled != nil && reconciled.Status == metav1.ConditionTrue {
 		return "Ready", ""
@@ -226,11 +225,7 @@ func npConditionSummary(cond *metav1.Condition, generation int64) string {
 	}
 
 	if cond.Message != "" {
-		msg := cond.Message
-		if len(msg) > 60 {
-			msg = msg[:60] + "..."
-		}
-		return msg
+		return truncateString(cond.Message, 60)
 	}
 	return cond.Reason
 }
