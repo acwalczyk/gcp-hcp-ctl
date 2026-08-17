@@ -45,7 +45,7 @@ func TestClusterStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When HostedClusterAvailable is False it should return Degraded", func(t *testing.T) {
+	t.Run("When HostedClusterAvailable is False it should return Progressing", func(t *testing.T) {
 		c := &gcpv1.Cluster{
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
@@ -53,8 +53,8 @@ func TestClusterStatus(t *testing.T) {
 				},
 			},
 		}
-		if got := clusterStatus(c); got != "Degraded" {
-			t.Errorf("expected 'Degraded', got %q", got)
+		if got := clusterStatus(c); got != "Progressing" {
+			t.Errorf("expected 'Progressing', got %q", got)
 		}
 	})
 
@@ -110,7 +110,7 @@ func TestClusterStatusDetail(t *testing.T) {
 		}
 	})
 
-	t.Run("When HostedClusterAvailable is False with message it should return Degraded with detail", func(t *testing.T) {
+	t.Run("When HostedClusterAvailable is False with message it should return Progressing with detail", func(t *testing.T) {
 		c := &gcpv1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.ClusterStatus{
@@ -120,8 +120,8 @@ func TestClusterStatusDetail(t *testing.T) {
 			},
 		}
 		got := clusterStatusDetail(c)
-		if got != "Degraded (Waiting for controllers)" {
-			t.Errorf("expected 'Degraded (Waiting for controllers)', got %q", got)
+		if got != "Progressing (Waiting for controllers)" {
+			t.Errorf("expected 'Progressing (Waiting for controllers)', got %q", got)
 		}
 	})
 
@@ -135,8 +135,42 @@ func TestClusterStatusDetail(t *testing.T) {
 			},
 		}
 		got := clusterStatusDetail(c)
-		if got != "Degraded (NotAvailable)" {
-			t.Errorf("expected 'Degraded (NotAvailable)', got %q", got)
+		if got != "Progressing (NotAvailable)" {
+			t.Errorf("expected 'Progressing (NotAvailable)', got %q", got)
+		}
+	})
+
+	t.Run("When HostedClusterAvailable is False with reason equal to type and no message it should omit the parenthetical", func(t *testing.T) {
+		// Mirrors gecko's actual behavior: hc_controller.go hard-codes
+		// Reason to the literal condition Type ("HostedClusterAvailable")
+		// and leaves Message empty, which previously rendered as the
+		// useless "Progressing (HostedClusterAvailable)".
+		c := &gcpv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Generation: 1},
+			Status: gcpv1.ClusterStatus{
+				Conditions: []metav1.Condition{
+					{Type: "HostedClusterAvailable", Status: metav1.ConditionFalse, Reason: "HostedClusterAvailable", ObservedGeneration: 1},
+				},
+			},
+		}
+		got := clusterStatusDetail(c)
+		if got != "Progressing" {
+			t.Errorf("expected 'Progressing', got %q", got)
+		}
+	})
+
+	t.Run("When HostedClusterAvailable is False and observed generation lags it should show controller reconciling detail", func(t *testing.T) {
+		c := &gcpv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Generation: 2},
+			Status: gcpv1.ClusterStatus{
+				Conditions: []metav1.Condition{
+					{Type: "HostedClusterAvailable", Status: metav1.ConditionFalse, Reason: "NotAvailable", Message: "old message", ObservedGeneration: 1},
+				},
+			},
+		}
+		got := clusterStatusDetail(c)
+		if got != "Progressing (controller reconciling generation 2)" {
+			t.Errorf("expected 'Progressing (controller reconciling generation 2)', got %q", got)
 		}
 	})
 

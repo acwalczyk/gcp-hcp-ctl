@@ -196,8 +196,20 @@ func deriveClusterStatus(c *gcpv1.Cluster) (phase, detail string) {
 	)
 }
 
-// deriveStatusFromConditions is a shared helper for deriving Ready/Progressing/Degraded
-// status from availability and health conditions. Used by both cluster and nodepool.
+// deriveStatusFromConditions derives a Ready/Progressing/Degraded status from
+// an availability condition and, optionally, a health condition.
+//
+// Gecko's conditions have no "sticky"/last-known-good signal, so an
+// availability condition that is merely False can't be distinguished from a
+// resource that's still provisioning normally (e.g. HostedClusterAvailable
+// is False for the entire control-plane bootstrap window, not just on
+// failure) - that state is reported as "Progressing", not "Degraded".
+//
+// Once availability is confirmed True, a health condition (if the resource
+// has one) gives an independent second signal: a health condition that
+// definitively reports False after availability succeeded is a real
+// regression rather than routine bring-up, so that combination is reported
+// as "Degraded".
 func deriveStatusFromConditions(
 	conditions []metav1.Condition,
 	deletionTimestamp *metav1.Time,
@@ -208,47 +220,49 @@ func deriveStatusFromConditions(
 	if deletionTimestamp != nil {
 		return "Deleting", ""
 	}
-
 	if len(conditions) == 0 {
 		return "Pending", ""
 	}
 
 	available := meta.FindStatusCondition(conditions, availableConditionType)
-
-	// Check health if applicable
-	if healthyConditionType != "" {
-		healthy := meta.FindStatusCondition(conditions, healthyConditionType)
-		if available != nil && available.Status == metav1.ConditionTrue &&
-			healthy != nil && healthy.Status == metav1.ConditionTrue {
-			return "Ready", ""
-		}
-	} else {
-		// No health condition, just check available
-		if available != nil && available.Status == metav1.ConditionTrue {
-			return "Ready", ""
-		}
-	}
-
-	// Degraded when available is False
-	if available != nil && available.Status == metav1.ConditionFalse {
-		return "Degraded", conditionSummary(available, generation)
-	}
-
-	// Progressing - show details if available condition exists with a message
-	if available != nil {
+	if available == nil || available.Status != metav1.ConditionTrue {
 		return "Progressing", conditionSummary(available, generation)
 	}
 
-	return "Progressing", ""
+	// Available is confirmed True.
+	if healthyConditionType == "" {
+		return "Ready", ""
+	}
+	healthy := meta.FindStatusCondition(conditions, healthyConditionType)
+	switch {
+	case healthy != nil && healthy.Status == metav1.ConditionTrue:
+		return "Ready", ""
+	case healthy != nil && healthy.Status == metav1.ConditionFalse:
+		return "Degraded", conditionSummary(healthy, generation)
+	default:
+		// Health hasn't reported yet or is still Unknown - no confirmed
+		// problem, so keep showing Progressing.
+		return "Progressing", conditionSummary(available, generation)
+	}
 }
 
 func conditionSummary(cond *metav1.Condition, generation int64) string {
+	if cond == nil {
+		return ""
+	}
 	if cond.ObservedGeneration < generation && cond.ObservedGeneration > 0 {
-		return fmt.Sprintf("adapters finalizing generation %d", generation)
+		return fmt.Sprintf("controller reconciling generation %d", generation)
 	}
 
 	if cond.Message != "" {
 		return truncateString(cond.Message, 60)
+	}
+	if cond.Reason == "" || cond.Reason == cond.Type {
+		// Some conditions (e.g. gecko's HostedClusterAvailable) set Reason to
+		// the literal condition Type with no Message, which adds no
+		// information beyond the phase itself - omit rather than showing a
+		// redundant "(HostedClusterAvailable)".
+		return ""
 	}
 	return cond.Reason
 }
