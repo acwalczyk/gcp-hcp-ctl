@@ -5,6 +5,7 @@ import (
 	"time"
 
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -18,11 +19,11 @@ func TestClusterStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When Ready condition is True it should return Ready", func(t *testing.T) {
+	t.Run("When HostedClusterAvailable is True it should return Ready", func(t *testing.T) {
 		c := &gcpv1.Cluster{
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Ready", Status: metav1.ConditionTrue},
+					{Type: "HostedClusterAvailable", Status: metav1.ConditionTrue},
 				},
 			},
 		}
@@ -31,11 +32,11 @@ func TestClusterStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When Available is True but Ready is absent it should return Progressing", func(t *testing.T) {
+	t.Run("When HostedClusterAvailable is absent it should return Progressing", func(t *testing.T) {
 		c := &gcpv1.Cluster{
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Available", Status: metav1.ConditionTrue},
+					{Type: "SomeOtherCondition", Status: metav1.ConditionTrue},
 				},
 			},
 		}
@@ -44,16 +45,16 @@ func TestClusterStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When Ready is False it should return Progressing", func(t *testing.T) {
+	t.Run("When HostedClusterAvailable is False it should return Degraded", func(t *testing.T) {
 		c := &gcpv1.Cluster{
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Ready", Status: metav1.ConditionFalse, Reason: "NotReady"},
+					{Type: "HostedClusterAvailable", Status: metav1.ConditionFalse, Reason: "NotAvailable"},
 				},
 			},
 		}
-		if got := clusterStatus(c); got != "Progressing" {
-			t.Errorf("expected 'Progressing', got %q", got)
+		if got := clusterStatus(c); got != "Degraded" {
+			t.Errorf("expected 'Degraded', got %q", got)
 		}
 	})
 
@@ -63,7 +64,7 @@ func TestClusterStatus(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: &now},
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Ready", Status: metav1.ConditionTrue},
+					{Type: "HostedClusterAvailable", Status: metav1.ConditionTrue},
 				},
 			},
 		}
@@ -72,7 +73,7 @@ func TestClusterStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When conditions exist but no Ready or Available it should return Progressing", func(t *testing.T) {
+	t.Run("When conditions exist but no HostedClusterAvailable it should return Progressing", func(t *testing.T) {
 		c := &gcpv1.Cluster{
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
@@ -91,7 +92,7 @@ func TestClusterStatusDetail(t *testing.T) {
 		c := &gcpv1.Cluster{
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Ready", Status: metav1.ConditionTrue},
+					{Type: "HostedClusterAvailable", Status: metav1.ConditionTrue},
 				},
 			},
 		}
@@ -109,31 +110,33 @@ func TestClusterStatusDetail(t *testing.T) {
 		}
 	})
 
-	t.Run("When Ready is False with message it should return Progressing with detail", func(t *testing.T) {
+	t.Run("When HostedClusterAvailable is False with message it should return Degraded with detail", func(t *testing.T) {
 		c := &gcpv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Ready", Status: metav1.ConditionFalse, Reason: "NotReady", Message: "Waiting for controllers"},
+					{Type: "HostedClusterAvailable", Status: metav1.ConditionFalse, Reason: "NotAvailable", Message: "Waiting for controllers", ObservedGeneration: 1},
 				},
 			},
 		}
 		got := clusterStatusDetail(c)
-		if got != "Progressing (Waiting for controllers)" {
-			t.Errorf("expected 'Progressing (Waiting for controllers)', got %q", got)
+		if got != "Degraded (Waiting for controllers)" {
+			t.Errorf("expected 'Degraded (Waiting for controllers)', got %q", got)
 		}
 	})
 
-	t.Run("When Ready is False with reason but no message it should show reason", func(t *testing.T) {
+	t.Run("When HostedClusterAvailable is False with reason but no message it should show reason", func(t *testing.T) {
 		c := &gcpv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.ClusterStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Ready", Status: metav1.ConditionFalse, Reason: "AdaptersNotReady"},
+					{Type: "HostedClusterAvailable", Status: metav1.ConditionFalse, Reason: "NotAvailable", ObservedGeneration: 1},
 				},
 			},
 		}
 		got := clusterStatusDetail(c)
-		if got != "Progressing (AdaptersNotReady)" {
-			t.Errorf("expected 'Progressing (AdaptersNotReady)', got %q", got)
+		if got != "Degraded (NotAvailable)" {
+			t.Errorf("expected 'Degraded (NotAvailable)', got %q", got)
 		}
 	})
 
@@ -178,7 +181,7 @@ func TestFindCondition(t *testing.T) {
 			{Type: "Ready", Status: metav1.ConditionTrue},
 			{Type: "Available", Status: metav1.ConditionFalse},
 		}
-		got := findCondition(conditions, "Available")
+		got := meta.FindStatusCondition(conditions, "Available")
 		if got == nil {
 			t.Fatal("expected non-nil condition")
 		}
@@ -191,13 +194,13 @@ func TestFindCondition(t *testing.T) {
 		conditions := []metav1.Condition{
 			{Type: "Ready", Status: metav1.ConditionTrue},
 		}
-		if got := findCondition(conditions, "Missing"); got != nil {
+		if got := meta.FindStatusCondition(conditions, "Missing"); got != nil {
 			t.Errorf("expected nil, got %v", got)
 		}
 	})
 
 	t.Run("When conditions list is empty it should return nil", func(t *testing.T) {
-		if got := findCondition(nil, "Ready"); got != nil {
+		if got := meta.FindStatusCondition(nil, "Ready"); got != nil {
 			t.Errorf("expected nil, got %v", got)
 		}
 	})

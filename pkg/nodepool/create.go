@@ -3,15 +3,16 @@ package nodepool
 import (
 	"fmt"
 
-	"github.com/openshift-online/gcp-hcp-ctl/pkg/hyperfleet"
+	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type createOptions struct {
 	clusterRef   string
-	replicas     int
+	replicas     int32
 	instanceType string
-	diskSize     int
+	diskSize     int64
 	diskType     string
 	zone         string
 	version      string
@@ -25,7 +26,7 @@ func newCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <nodepool-name>",
 		Short: "Create a nodepool",
-		Long: `Create a nodepool in a cluster via the HyperFleet API.
+		Long: `Create a nodepool in a cluster via the platform API server.
 
   gcphcpctl nodepool create my-nodepool --cluster my-cluster --replicas 2
   gcphcpctl nodepool create workers --cluster my-cluster \
@@ -44,14 +45,14 @@ func newCreateCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.clusterRef, "cluster", "", "Cluster name or ID (required)")
-	cmd.Flags().IntVar(&opts.replicas, "replicas", 2, "Number of replicas")
+	cmd.Flags().StringVar(&opts.clusterRef, "cluster", "", "Cluster name (required)")
+	cmd.Flags().Int32Var(&opts.replicas, "replicas", 2, "Number of replicas")
 	cmd.Flags().StringVar(&opts.instanceType, "instance-type", "n2-standard-4", "GCE machine type")
-	cmd.Flags().IntVar(&opts.diskSize, "disk-size", 100, "Boot disk size in GB")
+	cmd.Flags().Int64Var(&opts.diskSize, "disk-size", 100, "Boot disk size in GB")
 	cmd.Flags().StringVar(&opts.diskType, "disk-type", "pd-balanced", "Boot disk type: pd-standard, pd-ssd, pd-balanced")
-	cmd.Flags().StringVar(&opts.zone, "zone", "", "GCP zone (defaults to cluster region + \"-a\")")
-	cmd.Flags().StringVar(&opts.version, "version", "", "OCP version (e.g. 4.22.0-rc.5); defaults to cluster version")
-	cmd.Flags().StringVar(&opts.channelGroup, "channel-group", "", "Channel group: stable, fast, candidate, eus; defaults to cluster channel")
+	cmd.Flags().StringVar(&opts.zone, "zone", "", "GCP zone (optional)")
+	cmd.Flags().StringVar(&opts.version, "version", "", "OCP version (e.g. 4.22.0-rc.5) (required)")
+	cmd.Flags().StringVar(&opts.channelGroup, "channel-group", "stable", "Channel group: stable, fast, candidate, eus")
 	cmd.Flags().StringVarP(&opts.outputFmt, "output", "o", "text", "Output format: text, json, yaml")
 
 	_ = cmd.MarkFlagRequired("cluster")
@@ -60,89 +61,80 @@ func newCreateCmd() *cobra.Command {
 }
 
 func (o *createOptions) run(cmd *cobra.Command, npName string) error {
+	if err := o.validate(); err != nil {
+		return err
+	}
+
+	client := clientFromCmd(cmd)
+	ctx := cmd.Context()
+	ns := client.Namespace()
+
+	created, err := client.NodePools().Create(ctx, ns, o.buildNodePool(npName))
+	if err != nil {
+		return fmt.Errorf("creating nodepool: %w", err)
+	}
+
+	return printNodePool(cmd.OutOrStdout(), created, o.outputFmt)
+}
+
+// validate checks the create options against constraints the platform-api-server
+// enforces, surfacing friendly errors before the request is sent.
+func (o *createOptions) validate() error {
 	switch o.diskType {
 	case "pd-standard", "pd-ssd", "pd-balanced":
 	default:
 		return fmt.Errorf("--disk-type must be one of: pd-standard, pd-ssd, pd-balanced")
 	}
+	if o.diskSize <= 0 {
+		return fmt.Errorf("--disk-size must be greater than 0")
+	}
 	if o.replicas < 0 {
 		return fmt.Errorf("--replicas must be non-negative")
 	}
-
-	client := clientFromCmd(cmd)
-	ctx := cmd.Context()
-
-	cluster, err := resolveCluster(ctx, client, o.clusterRef)
-	if err != nil {
-		return err
+	switch o.channelGroup {
+	case "stable", "fast", "candidate", "eus":
+	default:
+		return fmt.Errorf("--channel-group must be one of: stable, fast, candidate, eus")
 	}
-	clusterID := ptrStr(cluster.Id)
-	if clusterID == "" {
-		return fmt.Errorf("cluster %q has no ID", o.clusterRef)
+	// The platform-api-server requires spec.release.version and channelGroup
+	// (both minLength=1, no server-side defaulting from the parent cluster).
+	if o.version == "" {
+		return fmt.Errorf("--version is required (e.g. --version 4.22.0)")
 	}
+	return nil
+}
 
-	diskType := hyperfleet.GCPRootVolumeType(o.diskType)
-	labels := map[string]string{"shard": defaultShardLabel}
-	req := hyperfleet.CreateNodePoolJSONRequestBody{
-		Name:   npName,
-		Kind:   strPtr("NodePool"),
-		Labels: &labels,
-		Spec: hyperfleet.NodePoolSpec{
-			Replicas: intPtr(o.replicas),
-			Platform: hyperfleet.NodePoolPlatformSpec{
-				Type: "gcp",
-				Gcp: hyperfleet.GCPNodePoolPlatform{
-					InstanceType: strPtr(o.instanceType),
-					RootVolume: &hyperfleet.GCPRootVolume{
-						Size: intPtr(o.diskSize),
-						Type: &diskType,
-					},
+// buildNodePool assembles the NodePool object sent to the platform-api-server.
+func (o *createOptions) buildNodePool(npName string) *gcpv1.NodePool {
+	nodePool := &gcpv1.NodePool{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: gcpv1.GroupVersion.String(),
+			Kind:       "NodePool",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: npName,
+		},
+		Spec: gcpv1.NodePoolSpec{
+			ClusterID: o.clusterRef,
+			NodeCount: &o.replicas,
+			Platform: gcpv1.NodePoolPlatformSpec{
+				Type: "GCP",
+				GCP: &gcpv1.GCPNodePoolPlatform{
+					MachineType: o.instanceType,
+					DiskSizeGB:  o.diskSize,
+					DiskType:    o.diskType,
 				},
+			},
+			Release: gcpv1.ReleaseSpec{
+				Version:      o.version,
+				ChannelGroup: o.channelGroup,
 			},
 		},
 	}
 
 	if o.zone != "" {
-		req.Spec.Platform.Gcp.Zone = strPtr(o.zone)
+		nodePool.Spec.Platform.GCP.Zone = o.zone
 	}
 
-	if o.version != "" || o.channelGroup != "" {
-		req.Spec.Release = &hyperfleet.NodePoolReleaseSpec{}
-		if o.version != "" {
-			req.Spec.Release.Version = strPtr(o.version)
-		}
-		if o.channelGroup != "" {
-			req.Spec.Release.ChannelGroup = strPtr(o.channelGroup)
-		}
-	}
-
-	resp, err := client.CreateNodePoolWithResponse(ctx, clusterID, req)
-	if err != nil {
-		return fmt.Errorf("creating nodepool: %w", err)
-	}
-	if resp.JSON201 == nil {
-		return fmt.Errorf("creating nodepool: %s", formatError(resp.HTTPResponse, resp.Body))
-	}
-
-	return printNodePool(cmd.OutOrStdout(), nodePoolFromCreateResponse(resp.JSON201), o.outputFmt)
-}
-
-func nodePoolFromCreateResponse(cr *hyperfleet.NodePoolCreateResponse) *hyperfleet.NodePool {
-	return &hyperfleet.NodePool{
-		CreatedBy:       cr.CreatedBy,
-		CreatedTime:     cr.CreatedTime,
-		DeletedBy:       cr.DeletedBy,
-		DeletedTime:     cr.DeletedTime,
-		Generation:      cr.Generation,
-		Href:            cr.Href,
-		Id:              cr.Id,
-		Kind:            cr.Kind,
-		Labels:          cr.Labels,
-		Name:            cr.Name,
-		OwnerReferences: cr.OwnerReferences,
-		Spec:            cr.Spec,
-		Status:          cr.Status,
-		UpdatedBy:       cr.UpdatedBy,
-		UpdatedTime:     cr.UpdatedTime,
-	}
+	return nodePool
 }

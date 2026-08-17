@@ -10,11 +10,11 @@ func newDeleteCmd() *cobra.Command {
 	var confirm bool
 
 	cmd := &cobra.Command{
-		Use:   "delete <nodepool-id-or-name>",
+		Use:   "delete <nodepool-name>",
 		Short: "Delete a nodepool",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return fmt.Errorf("nodepool ID or name is required\n\nUsage: %s", cmd.UseLine())
+				return fmt.Errorf("nodepool name is required\n\nUsage: %s", cmd.UseLine())
 			}
 			return cobra.ExactArgs(1)(cmd, args)
 		},
@@ -25,29 +25,13 @@ func newDeleteCmd() *cobra.Command {
 
 			client := clientFromCmd(cmd)
 			ctx := cmd.Context()
+			npName := args[0]
 
-			np, clusterID, err := resolveNodePool(ctx, client, args[0])
-			if err != nil {
-				return err
+			if err := client.NodePools().Delete(ctx, client.Namespace(), npName); err != nil {
+				return fmt.Errorf("deleting nodepool %s: %w", npName, err)
 			}
 
-			nodepoolID := ptrStr(np.Id)
-			if nodepoolID == "" {
-				return fmt.Errorf("nodepool %q has no ID", args[0])
-			}
-
-			resp, err := client.DeleteNodePoolByIdWithResponse(ctx, clusterID, nodepoolID)
-			if err != nil {
-				return fmt.Errorf("deleting nodepool %s: %w", np.Name, err)
-			}
-			if resp.JSON202 == nil {
-				if resp.HTTPResponse == nil {
-					return fmt.Errorf("deleting nodepool %s: no response received", np.Name)
-				}
-				return fmt.Errorf("deleting nodepool %s: %s", np.Name, formatError(resp.HTTPResponse, resp.Body))
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "Nodepool %s deletion initiated.\n", np.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Nodepool %s (project: %s) deletion initiated.\n", npName, client.Project())
 			return nil
 		},
 	}

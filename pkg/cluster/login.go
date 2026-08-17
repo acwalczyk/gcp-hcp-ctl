@@ -125,12 +125,24 @@ func resolveClusterEndpoint(ctx context.Context, client *platformapi.Client, clu
 		return "", clusterName, fmt.Errorf("no API endpoint found in cluster status (cluster may still be provisioning)")
 	}
 
-	parsed, err := url.Parse(hcr.APIEndpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+	endpoint := hcr.APIEndpoint
+
+	// Reject explicit non-HTTPS schemes (defensive check in case gecko behavior changes)
+	if strings.HasPrefix(endpoint, "http://") {
+		return "", clusterName, fmt.Errorf("cluster returned HTTP endpoint %q: HTTPS required", hcr.APIEndpoint)
+	}
+
+	// Add https:// prefix if not present (gecko currently returns bare hostnames)
+	if !strings.HasPrefix(endpoint, "https://") {
+		endpoint = "https://" + endpoint
+	}
+
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
 		return "", clusterName, fmt.Errorf("cluster returned invalid endpoint %q: must be a valid HTTPS URL", hcr.APIEndpoint)
 	}
 
-	return hcr.APIEndpoint, clusterName, nil
+	return endpoint, clusterName, nil
 }
 
 func validateAccess(ctx context.Context, kubeconfigPath, contextName string) (string, error) {

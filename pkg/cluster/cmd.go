@@ -11,6 +11,7 @@ import (
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -172,15 +173,6 @@ func printCluster(w io.Writer, c *gcpv1.Cluster, format string) error {
 	return bw.Flush()
 }
 
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == condType {
-			return &conditions[i]
-		}
-	}
-	return nil
-}
-
 func clusterStatus(c *gcpv1.Cluster) string {
 	phase, _ := deriveClusterStatus(c)
 	return phase
@@ -195,33 +187,78 @@ func clusterStatusDetail(c *gcpv1.Cluster) string {
 }
 
 func deriveClusterStatus(c *gcpv1.Cluster) (phase, detail string) {
-	if c.DeletionTimestamp != nil {
+	return deriveStatusFromConditions(
+		c.Status.Conditions,
+		c.DeletionTimestamp,
+		c.Generation,
+		"HostedClusterAvailable",
+		"", // clusters don't have a separate health condition
+	)
+}
+
+// deriveStatusFromConditions is a shared helper for deriving Ready/Progressing/Degraded
+// status from availability and health conditions. Used by both cluster and nodepool.
+func deriveStatusFromConditions(
+	conditions []metav1.Condition,
+	deletionTimestamp *metav1.Time,
+	generation int64,
+	availableConditionType string,
+	healthyConditionType string, // empty string if no health condition
+) (phase, detail string) {
+	if deletionTimestamp != nil {
 		return "Deleting", ""
 	}
 
-	conditions := c.Status.Conditions
 	if len(conditions) == 0 {
 		return "Pending", ""
 	}
 
-	ready := findCondition(conditions, "Ready")
+	available := meta.FindStatusCondition(conditions, availableConditionType)
 
-	if ready != nil && ready.Status == metav1.ConditionTrue {
-		return "Ready", ""
+	// Check health if applicable
+	if healthyConditionType != "" {
+		healthy := meta.FindStatusCondition(conditions, healthyConditionType)
+		if available != nil && available.Status == metav1.ConditionTrue &&
+			healthy != nil && healthy.Status == metav1.ConditionTrue {
+			return "Ready", ""
+		}
+	} else {
+		// No health condition, just check available
+		if available != nil && available.Status == metav1.ConditionTrue {
+			return "Ready", ""
+		}
 	}
 
-	if ready != nil && ready.Status == metav1.ConditionFalse {
-		msg := ready.Message
-		if len(msg) > 60 {
-			msg = msg[:60] + "..."
-		}
-		if msg != "" {
-			return "Progressing", msg
-		}
-		return "Progressing", ready.Reason
+	// Degraded when available is False
+	if available != nil && available.Status == metav1.ConditionFalse {
+		return "Degraded", conditionSummary(available, generation)
+	}
+
+	// Progressing - show details if available condition exists with a message
+	if available != nil {
+		return "Progressing", conditionSummary(available, generation)
 	}
 
 	return "Progressing", ""
+}
+
+func conditionSummary(cond *metav1.Condition, generation int64) string {
+	if cond.ObservedGeneration < generation && cond.ObservedGeneration > 0 {
+		return fmt.Sprintf("adapters finalizing generation %d", generation)
+	}
+
+	if cond.Message != "" {
+		return truncateString(cond.Message, 60)
+	}
+	return cond.Reason
+}
+
+func truncateString(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 func releaseVersion(c *gcpv1.Cluster) string {

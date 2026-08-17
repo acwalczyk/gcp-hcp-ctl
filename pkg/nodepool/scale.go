@@ -1,21 +1,21 @@
 package nodepool
 
 import (
+	"encoding/json"
 	"fmt"
 
-	"github.com/openshift-online/gcp-hcp-ctl/pkg/hyperfleet"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
 	"github.com/spf13/cobra"
 )
 
 func newScaleCmd() *cobra.Command {
 	var (
-		replicaCount int
+		replicaCount int32
 		outputFmt    string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "scale <nodepool-id-or-name>",
+		Use:   "scale <nodepool-name>",
 		Short: "Scale a nodepool's replica count",
 		Long: `Scale the number of replicas for a nodepool.
 
@@ -23,7 +23,7 @@ func newScaleCmd() *cobra.Command {
   gcphcpctl nodepool scale my-nodepool --replicas 0`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return fmt.Errorf("nodepool ID or name is required\n\nUsage: %s", cmd.UseLine())
+				return fmt.Errorf("nodepool name is required\n\nUsage: %s", cmd.UseLine())
 			}
 			return cobra.ExactArgs(1)(cmd, args)
 		},
@@ -37,44 +37,35 @@ func newScaleCmd() *cobra.Command {
 
 			client := clientFromCmd(cmd)
 			ctx := cmd.Context()
+			npName := args[0]
 
-			np, clusterID, err := resolveNodePool(ctx, client, args[0])
-			if err != nil {
-				return err
-			}
-
-			nodepoolID := ptrStr(np.Id)
-			if nodepoolID == "" {
-				return fmt.Errorf("nodepool %q has no ID", args[0])
-			}
-
-			// Platform is included because NodePoolSpec.Platform is a required
-			// (non-pointer) field — omitting it would serialize as zero-valued
-			// and overwrite the existing platform config.
-			patchReq := hyperfleet.PatchNodePoolByIdJSONRequestBody{
-				Spec: &hyperfleet.NodePoolSpec{
-					Replicas: intPtr(replicaCount),
-					Platform: np.Spec.Platform,
+			// A JSON merge patch only touches spec.nodeCount; all other spec
+			// fields (platform, release, etc.) are left untouched server-side,
+			// so we don't need to fetch and resend the full spec.
+			patch := map[string]any{
+				"spec": map[string]any{
+					"nodeCount": replicaCount,
 				},
 			}
-
-			resp, err := client.PatchNodePoolByIdWithResponse(ctx, clusterID, nodepoolID, patchReq)
+			patchData, err := json.Marshal(patch)
 			if err != nil {
-				return fmt.Errorf("scaling nodepool %s: %w", np.Name, err)
+				return fmt.Errorf("building patch: %w", err)
 			}
-			if resp.JSON200 == nil {
-				return fmt.Errorf("scaling nodepool %s: %s", np.Name, formatError(resp.HTTPResponse, resp.Body))
+
+			updated, err := client.NodePools().Patch(ctx, client.Namespace(), npName, patchData)
+			if err != nil {
+				return fmt.Errorf("scaling nodepool %s: %w", npName, err)
 			}
 
 			if output.ParseFormat(outputFmt) != output.FormatText {
-				return printNodePool(cmd.OutOrStdout(), resp.JSON200, outputFmt)
+				return printNodePool(cmd.OutOrStdout(), updated, outputFmt)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Nodepool %s scaled to %d replicas.\n", np.Name, replicaCount)
+			fmt.Fprintf(cmd.OutOrStdout(), "Nodepool %s scaled to %d replicas.\n", npName, replicaCount)
 			return nil
 		},
 	}
 
-	cmd.Flags().IntVar(&replicaCount, "replicas", 0, "Number of replicas (required)")
+	cmd.Flags().Int32Var(&replicaCount, "replicas", 0, "Number of replicas (required)")
 	cmd.Flags().StringVarP(&outputFmt, "output", "o", "text", "Output format: text, json, yaml")
 	return cmd
 }
