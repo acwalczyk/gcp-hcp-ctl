@@ -34,11 +34,25 @@ func TestNodePoolStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When NodePoolAvailable is False it should return Degraded", func(t *testing.T) {
+	t.Run("When NodePoolAvailable is False it should return Progressing", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
 					{Type: "NodePoolAvailable", Status: metav1.ConditionFalse, Reason: "NodePoolNotAvailable"},
+				},
+			},
+		}
+		if got := nodePoolStatus(np); got != "Progressing" {
+			t.Errorf("expected 'Progressing', got %q", got)
+		}
+	})
+
+	t.Run("When NodePoolAvailable is True and NodePoolHealthy is False it should return Degraded", func(t *testing.T) {
+		np := &gcpv1.NodePool{
+			Status: gcpv1.NodePoolStatus{
+				Conditions: []metav1.Condition{
+					{Type: "NodePoolAvailable", Status: metav1.ConditionTrue},
+					{Type: "NodePoolHealthy", Status: metav1.ConditionFalse, Reason: "NodePoolNotHealthy"},
 				},
 			},
 		}
@@ -47,12 +61,12 @@ func TestNodePoolStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When NodePoolHealthy is False it should return Progressing", func(t *testing.T) {
+	t.Run("When NodePoolAvailable is True and NodePoolHealthy is Unknown it should return Progressing", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
 					{Type: "NodePoolAvailable", Status: metav1.ConditionTrue},
-					{Type: "NodePoolHealthy", Status: metav1.ConditionFalse, Reason: "NodePoolNotHealthy"},
+					{Type: "NodePoolHealthy", Status: metav1.ConditionUnknown, Reason: "NodePoolHealthCheckPending"},
 				},
 			},
 		}
@@ -130,7 +144,7 @@ func TestNodePoolStatusDetail(t *testing.T) {
 		}
 	})
 
-	t.Run("When Degraded it should include the available condition message", func(t *testing.T) {
+	t.Run("When NodePoolAvailable is False it should return Progressing with the available condition message", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.NodePoolStatus{
@@ -140,12 +154,12 @@ func TestNodePoolStatusDetail(t *testing.T) {
 			},
 		}
 		got := nodePoolStatusDetail(np)
-		if got != "Degraded (Some nodes not available)" {
-			t.Errorf("expected 'Degraded (Some nodes not available)', got %q", got)
+		if got != "Progressing (Some nodes not available)" {
+			t.Errorf("expected 'Progressing (Some nodes not available)', got %q", got)
 		}
 	})
 
-	t.Run("When Degraded with generation mismatch it should show generation detail", func(t *testing.T) {
+	t.Run("When NodePoolAvailable is False with generation mismatch it should show generation detail", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			ObjectMeta: metav1.ObjectMeta{Generation: 3},
 			Status: gcpv1.NodePoolStatus{
@@ -155,12 +169,12 @@ func TestNodePoolStatusDetail(t *testing.T) {
 			},
 		}
 		got := nodePoolStatusDetail(np)
-		if got != "Degraded (adapters finalizing generation 3)" {
-			t.Errorf("expected 'Degraded (adapters finalizing generation 3)', got %q", got)
+		if got != "Progressing (controller reconciling generation 3)" {
+			t.Errorf("expected 'Progressing (controller reconciling generation 3)', got %q", got)
 		}
 	})
 
-	t.Run("When Degraded with long message it should truncate", func(t *testing.T) {
+	t.Run("When NodePoolAvailable is False with long message it should truncate", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.NodePoolStatus{
@@ -173,12 +187,12 @@ func TestNodePoolStatusDetail(t *testing.T) {
 		if !strings.Contains(got, "...") {
 			t.Errorf("expected truncation ellipsis, got %q", got)
 		}
-		if !strings.HasPrefix(got, "Degraded (") {
-			t.Errorf("expected 'Degraded (' prefix, got %q", got)
+		if !strings.HasPrefix(got, "Progressing (") {
+			t.Errorf("expected 'Progressing (' prefix, got %q", got)
 		}
 	})
 
-	t.Run("When Degraded with no message it should fall back to reason", func(t *testing.T) {
+	t.Run("When NodePoolAvailable is False with no message it should fall back to reason", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.NodePoolStatus{
@@ -188,8 +202,24 @@ func TestNodePoolStatusDetail(t *testing.T) {
 			},
 		}
 		got := nodePoolStatusDetail(np)
-		if got != "Degraded (NodePoolNotAvailable)" {
-			t.Errorf("expected 'Degraded (NodePoolNotAvailable)', got %q", got)
+		if got != "Progressing (NodePoolNotAvailable)" {
+			t.Errorf("expected 'Progressing (NodePoolNotAvailable)', got %q", got)
+		}
+	})
+
+	t.Run("When Available is True but Healthy is False it should return Degraded with the health condition message", func(t *testing.T) {
+		np := &gcpv1.NodePool{
+			ObjectMeta: metav1.ObjectMeta{Generation: 1},
+			Status: gcpv1.NodePoolStatus{
+				Conditions: []metav1.Condition{
+					{Type: "NodePoolAvailable", Status: metav1.ConditionTrue, Reason: "NodePoolAvailable"},
+					{Type: "NodePoolHealthy", Status: metav1.ConditionFalse, Reason: "NodePoolNotHealthy", Message: "2 of 3 nodes not ready", ObservedGeneration: 1},
+				},
+			},
+		}
+		got := nodePoolStatusDetail(np)
+		if got != "Degraded (2 of 3 nodes not ready)" {
+			t.Errorf("expected 'Degraded (2 of 3 nodes not ready)', got %q", got)
 		}
 	})
 }
@@ -286,8 +316,8 @@ func TestNpConditionSummary(t *testing.T) {
 			ObservedGeneration: 2,
 		}
 		got := conditionSummary(cond, 3)
-		if got != "adapters finalizing generation 3" {
-			t.Errorf("expected 'adapters finalizing generation 3', got %q", got)
+		if got != "controller reconciling generation 3" {
+			t.Errorf("expected 'controller reconciling generation 3', got %q", got)
 		}
 	})
 
