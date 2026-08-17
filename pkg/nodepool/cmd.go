@@ -193,33 +193,62 @@ func nodePoolStatusDetail(np *gcpv1.NodePool) string {
 }
 
 func deriveNodePoolStatus(np *gcpv1.NodePool) (phase, detail string) {
-	if np.DeletionTimestamp != nil {
+	return deriveStatusFromConditions(
+		np.Status.Conditions,
+		np.DeletionTimestamp,
+		np.Generation,
+		"NodePoolAvailable",
+		"NodePoolHealthy",
+	)
+}
+
+// deriveStatusFromConditions is a shared helper for deriving Ready/Progressing/Degraded
+// status from availability and health conditions. Used by both cluster and nodepool.
+func deriveStatusFromConditions(
+	conditions []metav1.Condition,
+	deletionTimestamp *metav1.Time,
+	generation int64,
+	availableConditionType string,
+	healthyConditionType string, // empty string if no health condition
+) (phase, detail string) {
+	if deletionTimestamp != nil {
 		return "Deleting", ""
 	}
 
-	conditions := np.Status.Conditions
 	if len(conditions) == 0 {
 		return "Pending", ""
 	}
 
-	reconciled := meta.FindStatusCondition(conditions, "Reconciled")
-	lastKnown := meta.FindStatusCondition(conditions, "LastKnownReconciled")
+	available := meta.FindStatusCondition(conditions, availableConditionType)
 
-	if reconciled != nil && reconciled.Status == metav1.ConditionTrue {
-		return "Ready", ""
+	// Check health if applicable
+	if healthyConditionType != "" {
+		healthy := meta.FindStatusCondition(conditions, healthyConditionType)
+		if available != nil && available.Status == metav1.ConditionTrue &&
+			healthy != nil && healthy.Status == metav1.ConditionTrue {
+			return "Ready", ""
+		}
+	} else {
+		// No health condition, just check available
+		if available != nil && available.Status == metav1.ConditionTrue {
+			return "Ready", ""
+		}
 	}
 
-	if reconciled != nil && reconciled.Status == metav1.ConditionFalse {
-		if lastKnown != nil && lastKnown.Status == metav1.ConditionTrue {
-			return "Degraded", npConditionSummary(reconciled, np.Generation)
-		}
-		return "Progressing", ""
+	// Degraded when available is False
+	if available != nil && available.Status == metav1.ConditionFalse {
+		return "Degraded", conditionSummary(available, generation)
+	}
+
+	// Progressing - show details if available condition exists with a message
+	if available != nil {
+		return "Progressing", conditionSummary(available, generation)
 	}
 
 	return "Progressing", ""
 }
 
-func npConditionSummary(cond *metav1.Condition, generation int64) string {
+func conditionSummary(cond *metav1.Condition, generation int64) string {
 	if cond.ObservedGeneration < generation && cond.ObservedGeneration > 0 {
 		return fmt.Sprintf("adapters finalizing generation %d", generation)
 	}

@@ -20,11 +20,12 @@ func TestNodePoolStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When Reconciled condition is True it should return Ready", func(t *testing.T) {
+	t.Run("When NodePoolAvailable and NodePoolHealthy are True it should return Ready", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionTrue},
+					{Type: "NodePoolAvailable", Status: metav1.ConditionTrue},
+					{Type: "NodePoolHealthy", Status: metav1.ConditionTrue},
 				},
 			},
 		}
@@ -33,30 +34,30 @@ func TestNodePoolStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When Reconciled is False without LastKnownReconciled it should return Progressing", func(t *testing.T) {
+	t.Run("When NodePoolAvailable is False it should return Degraded", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionFalse, Reason: "AdaptersNotReady"},
-				},
-			},
-		}
-		if got := nodePoolStatus(np); got != "Progressing" {
-			t.Errorf("expected 'Progressing', got %q", got)
-		}
-	})
-
-	t.Run("When Reconciled is False and LastKnownReconciled is True it should return Degraded", func(t *testing.T) {
-		np := &gcpv1.NodePool{
-			Status: gcpv1.NodePoolStatus{
-				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionFalse, Reason: "AdaptersNotReady"},
-					{Type: "LastKnownReconciled", Status: metav1.ConditionTrue},
+					{Type: "NodePoolAvailable", Status: metav1.ConditionFalse, Reason: "NodePoolNotAvailable"},
 				},
 			},
 		}
 		if got := nodePoolStatus(np); got != "Degraded" {
 			t.Errorf("expected 'Degraded', got %q", got)
+		}
+	})
+
+	t.Run("When NodePoolHealthy is False it should return Progressing", func(t *testing.T) {
+		np := &gcpv1.NodePool{
+			Status: gcpv1.NodePoolStatus{
+				Conditions: []metav1.Condition{
+					{Type: "NodePoolAvailable", Status: metav1.ConditionTrue},
+					{Type: "NodePoolHealthy", Status: metav1.ConditionFalse, Reason: "NodePoolNotHealthy"},
+				},
+			},
+		}
+		if got := nodePoolStatus(np); got != "Progressing" {
+			t.Errorf("expected 'Progressing', got %q", got)
 		}
 	})
 
@@ -68,7 +69,8 @@ func TestNodePoolStatus(t *testing.T) {
 			},
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionTrue},
+					{Type: "NodePoolAvailable", Status: metav1.ConditionTrue},
+					{Type: "NodePoolHealthy", Status: metav1.ConditionTrue},
 				},
 			},
 		}
@@ -77,11 +79,11 @@ func TestNodePoolStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("When conditions exist but no Reconciled it should return Progressing", func(t *testing.T) {
+	t.Run("When conditions exist but no NodePoolAvailable it should return Progressing", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Available", Status: metav1.ConditionTrue},
+					{Type: "SomeOtherCondition", Status: metav1.ConditionTrue},
 				},
 			},
 		}
@@ -96,7 +98,8 @@ func TestNodePoolStatusDetail(t *testing.T) {
 		np := &gcpv1.NodePool{
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionTrue},
+					{Type: "NodePoolAvailable", Status: metav1.ConditionTrue},
+					{Type: "NodePoolHealthy", Status: metav1.ConditionTrue},
 				},
 			},
 		}
@@ -127,19 +130,18 @@ func TestNodePoolStatusDetail(t *testing.T) {
 		}
 	})
 
-	t.Run("When Degraded it should include the reconciled condition message", func(t *testing.T) {
+	t.Run("When Degraded it should include the available condition message", func(t *testing.T) {
 		np := &gcpv1.NodePool{
 			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionFalse, Reason: "AdaptersNotReady", Message: "Some adapters not ready", ObservedGeneration: 1},
-					{Type: "LastKnownReconciled", Status: metav1.ConditionTrue},
+					{Type: "NodePoolAvailable", Status: metav1.ConditionFalse, Reason: "NodePoolNotAvailable", Message: "Some nodes not available", ObservedGeneration: 1},
 				},
 			},
 		}
 		got := nodePoolStatusDetail(np)
-		if got != "Degraded (Some adapters not ready)" {
-			t.Errorf("expected 'Degraded (Some adapters not ready)', got %q", got)
+		if got != "Degraded (Some nodes not available)" {
+			t.Errorf("expected 'Degraded (Some nodes not available)', got %q", got)
 		}
 	})
 
@@ -148,8 +150,7 @@ func TestNodePoolStatusDetail(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Generation: 3},
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionFalse, Reason: "NotReconciled", ObservedGeneration: 2},
-					{Type: "LastKnownReconciled", Status: metav1.ConditionTrue},
+					{Type: "NodePoolAvailable", Status: metav1.ConditionFalse, Reason: "NodePoolNotAvailable", ObservedGeneration: 2},
 				},
 			},
 		}
@@ -164,8 +165,7 @@ func TestNodePoolStatusDetail(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionFalse, Reason: "AdaptersNotReady", Message: strings.Repeat("a", 80), ObservedGeneration: 1},
-					{Type: "LastKnownReconciled", Status: metav1.ConditionTrue},
+					{Type: "NodePoolAvailable", Status: metav1.ConditionFalse, Reason: "NodePoolNotAvailable", Message: strings.Repeat("a", 80), ObservedGeneration: 1},
 				},
 			},
 		}
@@ -183,14 +183,13 @@ func TestNodePoolStatusDetail(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Generation: 1},
 			Status: gcpv1.NodePoolStatus{
 				Conditions: []metav1.Condition{
-					{Type: "Reconciled", Status: metav1.ConditionFalse, Reason: "AdaptersNotReady", ObservedGeneration: 1},
-					{Type: "LastKnownReconciled", Status: metav1.ConditionTrue},
+					{Type: "NodePoolAvailable", Status: metav1.ConditionFalse, Reason: "NodePoolNotAvailable", ObservedGeneration: 1},
 				},
 			},
 		}
 		got := nodePoolStatusDetail(np)
-		if got != "Degraded (AdaptersNotReady)" {
-			t.Errorf("expected 'Degraded (AdaptersNotReady)', got %q", got)
+		if got != "Degraded (NodePoolNotAvailable)" {
+			t.Errorf("expected 'Degraded (NodePoolNotAvailable)', got %q", got)
 		}
 	})
 }
@@ -286,7 +285,7 @@ func TestNpConditionSummary(t *testing.T) {
 			Reason:             "NotReconciled",
 			ObservedGeneration: 2,
 		}
-		got := npConditionSummary(cond, 3)
+		got := conditionSummary(cond, 3)
 		if got != "adapters finalizing generation 3" {
 			t.Errorf("expected 'adapters finalizing generation 3', got %q", got)
 		}
@@ -299,7 +298,7 @@ func TestNpConditionSummary(t *testing.T) {
 			Message:            "waiting for adapters",
 			ObservedGeneration: 0,
 		}
-		got := npConditionSummary(cond, 3)
+		got := conditionSummary(cond, 3)
 		if got != "waiting for adapters" {
 			t.Errorf("expected 'waiting for adapters', got %q", got)
 		}
@@ -312,7 +311,7 @@ func TestNpConditionSummary(t *testing.T) {
 			Message:            "detailed message",
 			ObservedGeneration: 1,
 		}
-		got := npConditionSummary(cond, 1)
+		got := conditionSummary(cond, 1)
 		if got != "detailed message" {
 			t.Errorf("expected 'detailed message', got %q", got)
 		}
@@ -325,7 +324,7 @@ func TestNpConditionSummary(t *testing.T) {
 			Message:            strings.Repeat("a", 80),
 			ObservedGeneration: 1,
 		}
-		got := npConditionSummary(cond, 1)
+		got := conditionSummary(cond, 1)
 		if len(got) != 63 {
 			t.Errorf("expected length 63 (60 + '...'), got %d", len(got))
 		}
@@ -340,7 +339,7 @@ func TestNpConditionSummary(t *testing.T) {
 			Reason:             "AdaptersNotReady",
 			ObservedGeneration: 1,
 		}
-		got := npConditionSummary(cond, 1)
+		got := conditionSummary(cond, 1)
 		if got != "AdaptersNotReady" {
 			t.Errorf("expected 'AdaptersNotReady', got %q", got)
 		}
@@ -351,7 +350,7 @@ func TestNpConditionSummary(t *testing.T) {
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: 1,
 		}
-		got := npConditionSummary(cond, 1)
+		got := conditionSummary(cond, 1)
 		if got != "" {
 			t.Errorf("expected empty string, got %q", got)
 		}
