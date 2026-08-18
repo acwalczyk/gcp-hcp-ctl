@@ -2,6 +2,7 @@ package nodepool
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
 	"github.com/spf13/cobra"
@@ -53,7 +54,7 @@ func newListCmd() *cobra.Command {
 					machineType(&np),
 					releaseVersion(&np),
 					nodePoolStatus(&np),
-					output.Age(np.CreationTimestamp.Format("2006-01-02T15:04:05Z")),
+					output.Age(np.CreationTimestamp.UTC().Format(time.RFC3339)),
 				)
 			}
 			return t.Flush()

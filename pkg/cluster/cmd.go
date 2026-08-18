@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
@@ -94,8 +95,8 @@ func printCluster(w io.Writer, c *gcpv1.Cluster, format string) error {
 	fmt.Fprintf(bw, "Status:          %s\n", clusterStatusDetail(c))
 	if !c.CreationTimestamp.IsZero() {
 		fmt.Fprintf(bw, "Created:         %s (%s)\n",
-			c.CreationTimestamp.Format("2006-01-02T15:04:05Z"),
-			output.Age(c.CreationTimestamp.Format("2006-01-02T15:04:05Z")))
+			c.CreationTimestamp.UTC().Format(time.RFC3339),
+			output.Age(c.CreationTimestamp.UTC().Format(time.RFC3339)))
 	}
 
 	if c.Spec.Release.Version != "" {

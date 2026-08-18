@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
 	"github.com/spf13/cobra"
@@ -52,7 +53,7 @@ func newListCmd() *cobra.Command {
 					releaseVersion(&c),
 					access,
 					clusterStatus(&c),
-					output.Age(c.CreationTimestamp.Format("2006-01-02T15:04:05Z")),
+					output.Age(c.CreationTimestamp.UTC().Format(time.RFC3339)),
 				)
 			}
 			return t.Flush()
