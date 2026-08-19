@@ -1645,20 +1645,6 @@ components:
         code: HYPERFLEET-VAL-001
         timestamp: '2024-01-15T10:30:00Z'
         trace_id: aabbccddeeff0011
-    BearerAuth:
-      type: object
-      required:
-        - type
-        - scheme
-      properties:
-        type:
-          type: string
-          enum:
-            - http
-        scheme:
-          type: string
-          enum:
-            - bearer
     Channel:
       type: object
       required:

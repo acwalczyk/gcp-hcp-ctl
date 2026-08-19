@@ -58,7 +58,7 @@ fi
 echo ""
 echo -e "${YELLOW}Step 3: Converting to OpenAPI 2.0 (Swagger)...${NC}"
 
-if node "${SCRIPT_DIR}/scripts/convert-to-swagger.mjs" \
+if go tool convert-to-swagger \
     "${OUTPUT_DIR}/openapi.yaml" \
     "${OUTPUT_DIR}/swagger.yaml"; then
     echo -e "${GREEN}✓ Successfully generated OpenAPI 2.0 (Swagger) schema${NC}"

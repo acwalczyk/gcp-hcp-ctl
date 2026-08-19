@@ -10,14 +10,14 @@
     "hyperfleet": "github:openshift-hyperfleet/hyperfleet-api-spec#main"
   },
   "devDependencies": {
-    "@stoplight/spectral-cli": "6.15.1",
-    "@typespec/compiler": "^1.6.0",
-    "@typespec/http": "^1.6.0",
-    "@typespec/openapi": "^1.6.0",
-    "@typespec/openapi3": "^1.6.0",
-    "@typespec/rest": "^0.82.0",
-    "@typespec/versioning": "^0.82.0",
-    "api-spec-converter": "^2.12.0",
-    "swagger2openapi": "^7.0.8"
+    "@typespec/compiler": "1.15.0",
+    "@typespec/http": "1.15.0",
+    "@typespec/openapi": "1.15.0",
+    "@typespec/openapi3": "1.15.0",
+    "@typespec/rest": "0.85.0",
+    "@typespec/versioning": "0.85.0"
+  },
+  "overrides": {
+    "fast-uri": "3.1.5"
   }
 }
