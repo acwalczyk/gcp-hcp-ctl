@@ -163,7 +163,7 @@ func printCluster(w io.Writer, c *gcpv1.Cluster, format string) error {
 				string(cond.Status),
 				cond.Reason,
 				msg,
-				cond.LastTransitionTime.Format("2006-01-02T15:04:05Z"),
+				cond.LastTransitionTime.UTC().Format(time.RFC3339),
 			)
 		}
 		if err := t.Flush(); err != nil {
