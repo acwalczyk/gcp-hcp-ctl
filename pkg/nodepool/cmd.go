@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
@@ -149,11 +150,11 @@ func printNodePool(w io.Writer, np *gcpv1.NodePool, format string) error {
 	}
 	fmt.Fprintf(bw, "Status:       %s\n", nodePoolStatusDetail(np))
 	if !np.CreationTimestamp.IsZero() {
-		fmt.Fprintf(bw, "CreatedAt:    %s\n", np.CreationTimestamp.Format("2006-01-02T15:04:05Z"))
+		fmt.Fprintf(bw, "CreatedAt:    %s\n", np.CreationTimestamp.UTC().Format(time.RFC3339))
 	}
 
 	if np.DeletionTimestamp != nil {
-		fmt.Fprintf(bw, "DeletedAt:    %s\n", np.DeletionTimestamp.Format("2006-01-02T15:04:05Z"))
+		fmt.Fprintf(bw, "DeletedAt:    %s\n", np.DeletionTimestamp.UTC().Format(time.RFC3339))
 	}
 
 	if len(np.Status.Conditions) > 0 {
@@ -166,7 +167,7 @@ func printNodePool(w io.Writer, np *gcpv1.NodePool, format string) error {
 				string(cond.Status),
 				cond.Reason,
 				msg,
-				cond.LastTransitionTime.Format("2006-01-02T15:04:05Z"),
+				cond.LastTransitionTime.UTC().Format(time.RFC3339),
 			)
 		}
 		if err := t.Flush(); err != nil {
