@@ -8,7 +8,7 @@ LDFLAGS := -X $(MODULE)/pkg/cli.version=$(VERSION) \
 	-X $(MODULE)/pkg/cli.commit=$(COMMIT) \
 	-X $(MODULE)/pkg/cli.date=$(DATE)
 
-OAPI_CODEGEN ?= $(shell go env GOPATH)/bin/oapi-codegen
+OAPI_CODEGEN ?= go tool oapi-codegen
 TYPESPEC_DIR := api/hyperfleet/typespec
 
 help: ## Show this help

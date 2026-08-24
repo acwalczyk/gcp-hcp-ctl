@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Go modules (CLI + build tooling declared via `go tool`)
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+
+  # npm TypeSpec toolchain used to generate the HyperFleet OpenAPI spec
+  - package-ecosystem: npm
+    directory: /api/hyperfleet/typespec
+    schedule:
+      interval: weekly
+    groups:
+      typespec:
+        patterns:
+          - "*"
