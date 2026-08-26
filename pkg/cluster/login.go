@@ -38,7 +38,7 @@ The command resolves the cluster's API endpoint from the platform API server
   gcphcpctl cluster login my-cluster
 
   # Write to a specific kubeconfig file
-  gcphcpctl cluster login my-cluster --kubeconfig ~/.kube/hyperfleet`,
+  gcphcpctl cluster login my-cluster --kubeconfig ~/.kube/config`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogin(cmd.Context(), cmd, args[0], opts)

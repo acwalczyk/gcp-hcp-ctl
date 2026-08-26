@@ -69,7 +69,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&region, "region", os.Getenv("GCPHCPCTL_REGION"), "GCP region (env: GCPHCPCTL_REGION)")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "text", "Output format: text, json, yaml")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Config file path (default: ~/.gcphcpctl/config.yaml)")
-	rootCmd.PersistentFlags().StringVar(&apiEndpoint, "api-endpoint", os.Getenv("GCPHCPCTL_API_ENDPOINT"), "HyperFleet API endpoint URL (env: GCPHCPCTL_API_ENDPOINT)")
+	rootCmd.PersistentFlags().StringVar(&apiEndpoint, "api-endpoint", os.Getenv("GCPHCPCTL_API_ENDPOINT"), "Platform API endpoint URL (env: GCPHCPCTL_API_ENDPOINT)")
 	rootCmd.PersistentFlags().StringVar(&oidcEndpoint, "oidc-endpoint", os.Getenv("GCPHCPCTL_OIDC_ENDPOINT"), "OIDC issuer base URL (env: GCPHCPCTL_OIDC_ENDPOINT)")
 
 	rootCmd.AddCommand(newConfigCmd())
