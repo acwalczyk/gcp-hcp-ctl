@@ -9,13 +9,3 @@ updates:
       go-dependencies:
         patterns:
           - "*"
-
-  # npm TypeSpec toolchain used to generate the HyperFleet OpenAPI spec
-  - package-ecosystem: npm
-    directory: /api/hyperfleet/typespec
-    schedule:
-      interval: weekly
-    groups:
-      typespec:
-        patterns:
-          - "*"

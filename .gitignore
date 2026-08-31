@@ -7,6 +7,3 @@ bin/
 *.out
 .DS_Store
 
-# TypeSpec build artifacts
-api/hyperfleet/typespec/node_modules/
-api/hyperfleet/typespec/tsp-output-*/
