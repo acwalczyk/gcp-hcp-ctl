@@ -52,6 +52,10 @@ func NewClusterCmd() *cobra.Command {
 	clusterCmd.AddCommand(newListCmd())
 	clusterCmd.AddCommand(newDeleteCmd())
 	clusterCmd.AddCommand(newLoginCmd())
+	clusterCmd.AddCommand(newCreateUpgradePolicyCmd())
+	clusterCmd.AddCommand(newGetUpgradePolicyCmd())
+	clusterCmd.AddCommand(newUpdateUpgradePolicyCmd())
+	clusterCmd.AddCommand(newDeleteUpgradePolicyCmd())
 
 	return clusterCmd
 }

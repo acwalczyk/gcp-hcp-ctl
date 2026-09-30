@@ -140,6 +140,12 @@ func (c *Client) Versions() VersionInterface {
 	return &versionClient{restClient: c.restClient}
 }
 
+// ControlPlaneUpgradePolicies returns a ControlPlaneUpgradePolicyInterface for
+// performing control-plane upgrade policy operations.
+func (c *Client) ControlPlaneUpgradePolicies() ControlPlaneUpgradePolicyInterface {
+	return &controlPlaneUpgradePolicyClient{restClient: c.restClient}
+}
+
 // ClusterInterface defines operations on Cluster resources.
 type ClusterInterface interface {
 	Create(ctx context.Context, namespace string, cluster *gcpv1.Cluster) (*gcpv1.Cluster, error)
@@ -316,6 +322,62 @@ func (n *nodePoolClient) Delete(ctx context.Context, namespace, name string) err
 		Name(name).
 		Do(ctx)
 	return normalizeResult(response, http.MethodDelete, "nodepools", name, false)
+}
+
+// ControlPlaneUpgradePolicyInterface defines operations on
+// ControlPlaneUpgradePolicy resources.
+type ControlPlaneUpgradePolicyInterface interface {
+	Create(ctx context.Context, namespace string, policy *gcpv1.ControlPlaneUpgradePolicy) (*gcpv1.ControlPlaneUpgradePolicy, error)
+	Get(ctx context.Context, namespace, name string) (*gcpv1.ControlPlaneUpgradePolicy, error)
+	Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.ControlPlaneUpgradePolicy, error)
+	Delete(ctx context.Context, namespace, name string) error
+}
+
+type controlPlaneUpgradePolicyClient struct {
+	restClient rest.Interface
+}
+
+func (c *controlPlaneUpgradePolicyClient) Create(ctx context.Context, namespace string, policy *gcpv1.ControlPlaneUpgradePolicy) (*gcpv1.ControlPlaneUpgradePolicy, error) {
+	result := &gcpv1.ControlPlaneUpgradePolicy{}
+	err := c.restClient.Post().
+		Namespace(namespace).
+		Resource("controlplaneupgradepolicies").
+		Body(policy).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (c *controlPlaneUpgradePolicyClient) Get(ctx context.Context, namespace, name string) (*gcpv1.ControlPlaneUpgradePolicy, error) {
+	result := &gcpv1.ControlPlaneUpgradePolicy{}
+	err := c.restClient.Get().
+		Namespace(namespace).
+		Resource("controlplaneupgradepolicies").
+		Name(name).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (c *controlPlaneUpgradePolicyClient) Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.ControlPlaneUpgradePolicy, error) {
+	result := &gcpv1.ControlPlaneUpgradePolicy{}
+	err := c.restClient.Patch(types.MergePatchType).
+		Namespace(namespace).
+		Resource("controlplaneupgradepolicies").
+		Name(name).
+		Body(patchData).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (c *controlPlaneUpgradePolicyClient) Delete(ctx context.Context, namespace, name string) error {
+	return c.restClient.Delete().
+		Namespace(namespace).
+		Resource("controlplaneupgradepolicies").
+		Name(name).
+		Do(ctx).
+		Error()
 }
 
 // NamespaceForProject returns the namespace for a given GCP project ID.
