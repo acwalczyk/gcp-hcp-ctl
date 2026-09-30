@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	resourceyaml "sigs.k8s.io/yaml"
 )
 
 // Format represents an output format.
@@ -50,6 +51,16 @@ func PrintYAML(w io.Writer, data interface{}) error {
 		return err
 	}
 	return enc.Close()
+}
+
+// PrintResourceYAML writes an API resource as YAML using its JSON field names.
+func PrintResourceYAML(w io.Writer, data interface{}) error {
+	encoded, err := resourceyaml.Marshal(data)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(encoded)
+	return err
 }
 
 // PrintResult formats and prints an execution result based on the output format.

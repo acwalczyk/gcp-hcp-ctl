@@ -14,6 +14,7 @@ import (
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/regions"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/role"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/rolebinding"
+	versions "github.com/openshift-online/gcp-hcp-ctl/pkg/version"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -72,6 +73,7 @@ Configuration priority: CLI flags > environment variables > config file (~/.gcph
 		cluster.NewClusterCmd(cfg),
 		nodepool.NewNodePoolCmd(cfg),
 		regions.NewRegionsCmd(),
+		versions.NewVersionCmd(),
 		newVersionCmd(),
 		newCompletionCmd(root),
 	)

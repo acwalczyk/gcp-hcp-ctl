@@ -7,6 +7,31 @@ import (
 	"time"
 )
 
+func TestPrintResourceYAML(t *testing.T) {
+	type resource struct {
+		APIVersion string `json:"apiVersion"`
+		ClusterID  string `json:"clusterID"`
+	}
+
+	var buf bytes.Buffer
+	if err := PrintResourceYAML(&buf, resource{
+		APIVersion: "gcp.managed.openshift.io/v1",
+		ClusterID:  "example",
+	}); err != nil {
+		t.Fatalf("printing resource YAML: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"apiVersion: gcp.managed.openshift.io/v1",
+		"clusterID: example",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestPrintResultTextResourceTable(t *testing.T) {
 	data := map[string]interface{}{
 		"resource_type": "namespaces",
@@ -340,7 +365,7 @@ func TestPrintAnalysis_WithStructuredJSON(t *testing.T) {
 			"pod_phase":          "Running",
 			"events_count":       float64(3),
 			"log_lines_analyzed": float64(50),
-			"ai_analysis":       `{"summary":"Pod is healthy.","severity":"LOW","errors_detected":[],"root_cause":"None","recommended_actions":["Continue monitoring"]}`,
+			"ai_analysis":        `{"summary":"Pod is healthy.","severity":"LOW","errors_detected":[],"root_cause":"None","recommended_actions":["Continue monitoring"]}`,
 		},
 	}
 	if err := PrintAnalysis(&buf, data, "test-ns"); err != nil {
@@ -636,7 +661,7 @@ func TestPrintPVCTable(t *testing.T) {
 				"metadata": map[string]interface{}{
 					"name":              "data-etcd-0",
 					"namespace":         "clusters-test-ns",
-					"creationTimestamp":  "2025-01-01T00:00:00Z",
+					"creationTimestamp": "2025-01-01T00:00:00Z",
 				},
 				"spec": map[string]interface{}{
 					"volumeName":       "pvc-68d9514c-44cd-484e-aefa-7084db20348c",
@@ -671,13 +696,13 @@ func TestPrintPVTable(t *testing.T) {
 			map[string]interface{}{
 				"metadata": map[string]interface{}{
 					"name":              "pvc-1e2be0c7-8d1f-43a6-9a6b-31c4a9eeadd4",
-					"creationTimestamp":  "2025-01-01T00:00:00Z",
+					"creationTimestamp": "2025-01-01T00:00:00Z",
 				},
 				"spec": map[string]interface{}{
 					"capacity":                      map[string]interface{}{"storage": "8Gi"},
 					"accessModes":                   []interface{}{"ReadWriteOnce"},
-					"persistentVolumeReclaimPolicy":  "Delete",
-					"storageClassName":               "standard-rwo",
+					"persistentVolumeReclaimPolicy": "Delete",
+					"storageClassName":              "standard-rwo",
 					"claimRef": map[string]interface{}{
 						"namespace": "clusters-test-ns",
 						"name":      "data-etcd-0",
