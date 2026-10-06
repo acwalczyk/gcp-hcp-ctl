@@ -55,7 +55,11 @@ func printVersion(w io.Writer, version *gcpv1.Version, format string) error {
 	}
 
 	bw := bufio.NewWriter(w)
-	fmt.Fprintf(bw, "Version:        %s\n", version.Name)
-	fmt.Fprintf(bw, "Channel Groups: %s\n", strings.Join(version.Spec.ChannelGroups, ", "))
+	if _, err := fmt.Fprintf(bw, "Version:        %s\n", version.Name); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(bw, "Channel Groups: %s\n", strings.Join(version.Spec.ChannelGroups, ", ")); err != nil {
+		return err
+	}
 	return bw.Flush()
 }
