@@ -73,6 +73,7 @@ func newGetUpgradePolicyCmd() *cobra.Command {
 
 func newUpdateUpgradePolicyCmd() *cobra.Command {
 	opts := &upgradePolicyOptions{}
+	var clearExclusions bool
 	cmd := &cobra.Command{
 		Use:   "update-upgrade-policy <cluster-name>",
 		Short: "Update a control-plane upgrade policy",
@@ -83,7 +84,18 @@ func newUpdateUpgradePolicyCmd() *cobra.Command {
 				return err
 			}
 
-			patchData, err := json.Marshal(map[string]gcpv1.ControlPlaneUpgradePolicySpec{"spec": policy.Spec})
+			// Omitted merge-patch fields preserve their current values. Use an
+			// explicit empty array to clear exclusions despite the API's omitempty.
+			spec := map[string]any{
+				"clusterID":         policy.Spec.ClusterID,
+				"maintenanceWindow": policy.Spec.MaintenanceWindow,
+			}
+			if clearExclusions {
+				spec["maintenanceExclusions"] = []gcpv1.ControlPlaneMaintenanceExclusion{}
+			} else if cmd.Flags().Changed("exclusion") {
+				spec["maintenanceExclusions"] = policy.Spec.MaintenanceExclusions
+			}
+			patchData, err := json.Marshal(map[string]any{"spec": spec})
 			if err != nil {
 				return fmt.Errorf("encoding upgrade policy update: %w", err)
 			}
@@ -97,6 +109,8 @@ func newUpdateUpgradePolicyCmd() *cobra.Command {
 		},
 	}
 	addUpgradePolicyFlags(cmd, opts)
+	cmd.Flags().BoolVar(&clearExclusions, "clear-exclusions", false, "Remove all maintenance exclusions")
+	cmd.MarkFlagsMutuallyExclusive("exclusion", "clear-exclusions")
 	return cmd
 }
 
