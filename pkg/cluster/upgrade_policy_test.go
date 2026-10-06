@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,23 @@ import (
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 )
+
+type failingPolicyWriter struct{ err error }
+
+func (w failingPolicyWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestDeleteUpgradePolicyReturnsOutputError(t *testing.T) {
+	want := errors.New("output unavailable")
+	client := clusterTestClient(t, http.StatusOK, `{}`)
+	cmd := newDeleteUpgradePolicyCmd()
+	cmd.SetContext(context.WithValue(context.Background(), clientKey, client))
+	cmd.SetOut(failingPolicyWriter{err: want})
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"upgrade-poc", "--confirm"})
+	if err := cmd.Execute(); !errors.Is(err, want) {
+		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
 
 func TestUpdateUpgradePolicyExclusions(t *testing.T) {
 	for _, tc := range []struct {

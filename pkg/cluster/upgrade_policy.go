@@ -129,8 +129,8 @@ func newDeleteUpgradePolicyCmd() *cobra.Command {
 			if err := client.ControlPlaneUpgradePolicies().Delete(cmd.Context(), client.Namespace(), args[0]); err != nil {
 				return fmt.Errorf("deleting upgrade policy: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Upgrade policy for cluster %s deleted.\n", args[0])
-			return nil
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "Upgrade policy for cluster %s deleted.\n", args[0])
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm deletion (required)")
@@ -151,9 +151,12 @@ func addUpgradePolicyFlags(cmd *cobra.Command, opts *upgradePolicyOptions) {
 	cmd.Flags().StringSliceVar(&opts.days, "day", nil, "Maintenance window day as a lowercase full weekday name; repeat for multiple days (required)")
 	cmd.Flags().StringArrayVar(&opts.exclusions, "exclusion", nil, "Exclusion as name,start,end; repeat for multiple exclusions")
 	cmd.Flags().StringVarP(&opts.outputFmt, "output", "o", "text", "Output format: text, json, yaml")
-	_ = cmd.MarkFlagRequired("start")
-	_ = cmd.MarkFlagRequired("duration-minutes")
-	_ = cmd.MarkFlagRequired("day")
+	for _, name := range []string{"start", "duration-minutes", "day"} {
+		if err := cmd.MarkFlagRequired(name); err != nil {
+			// All flags are registered above; a missing flag is a programming error.
+			panic(fmt.Errorf("marking upgrade policy flag %q required: %w", name, err))
+		}
+	}
 }
 
 func (o *upgradePolicyOptions) build(clusterName string) (*gcpv1.ControlPlaneUpgradePolicy, error) {
