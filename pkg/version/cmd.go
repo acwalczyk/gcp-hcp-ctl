@@ -27,11 +27,17 @@ func NewVersionCmd() *cobra.Command {
 				}
 			}
 
-			apiEndpoint, _ := cmd.Flags().GetString("api-endpoint")
+			apiEndpoint, err := cmd.Flags().GetString("api-endpoint")
+			if err != nil {
+				return fmt.Errorf("reading --api-endpoint: %w", err)
+			}
 			if apiEndpoint == "" {
 				return fmt.Errorf("--api-endpoint is required (or set GCPHCPCTL_API_ENDPOINT or api_endpoint in config)")
 			}
-			project, _ := cmd.Flags().GetString("project")
+			project, err := cmd.Flags().GetString("project")
+			if err != nil {
+				return fmt.Errorf("reading --project: %w", err)
+			}
 			client, err := newClient(apiEndpoint, project)
 			if err != nil {
 				return err
