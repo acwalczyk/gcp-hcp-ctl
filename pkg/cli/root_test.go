@@ -101,3 +101,19 @@ func TestEndpointFlagsOverrideEnvironmentAndFile(t *testing.T) {
 		t.Errorf("environment endpoints did not override file:\n%s", output.String())
 	}
 }
+
+func TestLoadConfigUpdatesPersistentOutputFlag(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configFile, []byte("output: yaml\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	root := newRootCmd()
+	root.SetArgs([]string{"config", "--config", configFile})
+	root.SetOut(&bytes.Buffer{})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := root.PersistentFlags().Lookup("output").Value.String(); got != "yaml" {
+		t.Errorf("persistent output flag = %q, want yaml", got)
+	}
+}

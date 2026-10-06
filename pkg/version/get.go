@@ -12,8 +12,6 @@ import (
 )
 
 func newGetCmd() *cobra.Command {
-	var outputFmt string
-
 	cmd := &cobra.Command{
 		Use:   "get <version>",
 		Short: "Get a supported OpenShift version",
@@ -24,6 +22,10 @@ func newGetCmd() *cobra.Command {
 			return cobra.ExactArgs(1)(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			outputFmt, err := cmd.Flags().GetString("output")
+			if err != nil {
+				return fmt.Errorf("reading --output: %w", err)
+			}
 			version, err := clientFromCmd(cmd).Versions().Get(cmd.Context(), args[0])
 			if err != nil {
 				return fmt.Errorf("getting version %q: %w", args[0], err)
@@ -32,7 +34,6 @@ func newGetCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&outputFmt, "output", "o", "text", "Output format: text, json, yaml")
 	return cmd
 }
 

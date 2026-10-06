@@ -12,13 +12,15 @@ import (
 )
 
 func newListCmd() *cobra.Command {
-	var outputFmt string
-
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List supported OpenShift versions",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			outputFmt, err := cmd.Flags().GetString("output")
+			if err != nil {
+				return fmt.Errorf("reading --output: %w", err)
+			}
 			versions, err := clientFromCmd(cmd).Versions().List(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("listing versions: %w", err)
@@ -40,7 +42,9 @@ func newListCmd() *cobra.Command {
 			defaults := map[string]string{}
 			channels, err := clientFromCmd(cmd).Channels().List(cmd.Context())
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: unable to load channel defaults: %v\n", err)
+				if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: unable to load channel defaults: %v\n", err); writeErr != nil {
+					return fmt.Errorf("writing channel-default warning: %w", writeErr)
+				}
 			} else {
 				for _, channel := range channels.Items {
 					defaults[channel.Name] = channel.Spec.InstallDefaultVersion
@@ -68,7 +72,6 @@ func newListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&outputFmt, "output", "o", "text", "Output format: text, json, yaml")
 	return cmd
 }
 

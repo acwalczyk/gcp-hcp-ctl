@@ -3,6 +3,8 @@ package version
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,14 +25,36 @@ func versionTestClient(t *testing.T, handler http.HandlerFunc) *platformapi.Clie
 	return client
 }
 
+func writeVersionFixture(t *testing.T, w http.ResponseWriter, body []byte) {
+	t.Helper()
+	if _, err := w.Write(body); err != nil {
+		t.Errorf("writing response fixture: %v", err)
+	}
+}
+
 func executeVersionTestCommand(t *testing.T, client *platformapi.Client, args ...string) (error, string, string) {
+	return executeVersionTestCommandWithFormat(t, client, "", args...)
+}
+
+func executeVersionTestCommandWithFormat(t *testing.T, client *platformapi.Client, configuredFormat string, args ...string) (error, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	root := &cobra.Command{Use: "gcphcpctl", SilenceUsage: true}
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
+	var outputFormat string
+	root.PersistentFlags().StringVarP(&outputFormat, "output", "o", "text", "Output format")
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if configuredFormat != "" && !cmd.Flags().Changed("output") {
+			return root.PersistentFlags().Lookup("output").Value.Set(configuredFormat)
+		}
+		return nil
+	}
 	group := NewVersionCmd()
 	group.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if err := root.PersistentPreRunE(cmd, nil); err != nil {
+			return err
+		}
 		cmd.SetContext(context.WithValue(cmd.Context(), clientKey, client))
 		return nil
 	}
@@ -40,12 +64,72 @@ func executeVersionTestCommand(t *testing.T, client *platformapi.Client, args ..
 	return err, stdout.String(), stderr.String()
 }
 
+type failingVersionWriter struct{ err error }
+
+func (w failingVersionWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestVersionListReturnsWarningWriteError(t *testing.T) {
+	want := errors.New("stderr unavailable")
+	client := versionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/channels") {
+			w.WriteHeader(http.StatusInternalServerError)
+			writeVersionFixture(t, w, []byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"InternalError"}`))
+			return
+		}
+		writeVersionFixture(t, w, []byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"VersionList","items":[{"metadata":{"name":"4.22.14"}}]}`))
+	})
+	cmd := newListCmd()
+	cmd.SetContext(context.WithValue(context.Background(), clientKey, client))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(failingVersionWriter{err: want})
+	cmd.Flags().String("output", "text", "Output format")
+	if err := cmd.Execute(); !errors.Is(err, want) {
+		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
+
+func TestVersionCommandsUseConfiguredOutput(t *testing.T) {
+	client := versionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/apis/gcp.managed.openshift.io/v1/versions":
+			writeVersionFixture(t, w, []byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"VersionList","items":[{"metadata":{"name":"4.22.14"},"spec":{"channelGroups":["stable"]}}]}`))
+		case "/apis/gcp.managed.openshift.io/v1/versions/4.22.14":
+			writeVersionFixture(t, w, []byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"Version","metadata":{"name":"4.22.14"},"spec":{"channelGroups":["stable"]}}`))
+		default:
+			t.Errorf("unexpected request path: %s", r.URL.Path)
+		}
+	})
+	for _, tc := range []struct {
+		name, format, want string
+		args               []string
+	}{
+		{name: "configured list JSON", format: "json", args: []string{"list"}, want: `"kind": "VersionList"`},
+		{name: "configured get YAML", format: "yaml", args: []string{"get", "4.22.14"}, want: "kind: Version"},
+		{name: "explicit output overrides config", format: "yaml", args: []string{"get", "4.22.14", "-o", "json"}, want: `"kind": "Version"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err, stdout, stderr := executeVersionTestCommandWithFormat(t, client, tc.format, tc.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stderr != "" {
+				t.Errorf("stderr = %q", stderr)
+			}
+			if !strings.Contains(stdout, tc.want) {
+				t.Errorf("output missing %q:\n%s", tc.want, stdout)
+			}
+		})
+	}
+}
+
 func TestVersionListCommand(t *testing.T) {
 	client := versionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/apis/gcp.managed.openshift.io/v1/versions":
-			_, _ = w.Write([]byte(`{
+			writeVersionFixture(t, w, []byte(`{
   "apiVersion":"gcp.managed.openshift.io/v1",
   "kind":"VersionList",
   "items":[
@@ -54,7 +138,7 @@ func TestVersionListCommand(t *testing.T) {
   ]
 }`))
 		case "/apis/gcp.managed.openshift.io/v1/channels":
-			_, _ = w.Write([]byte(`{
+			writeVersionFixture(t, w, []byte(`{
   "apiVersion":"gcp.managed.openshift.io/v1",
   "kind":"ChannelList",
   "items":[
@@ -88,10 +172,10 @@ func TestVersionListCommandContinuesWhenChannelsFail(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "/channels") {
 			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"InternalError"}`))
+			writeVersionFixture(t, w, []byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"InternalError"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{
+		writeVersionFixture(t, w, []byte(`{
   "apiVersion":"gcp.managed.openshift.io/v1",
   "kind":"VersionList",
   "items":[{"metadata":{"name":"4.22.14"},"spec":{"channelGroups":["stable"]}}]
@@ -116,7 +200,7 @@ func TestVersionGetCommandYAML(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
+		writeVersionFixture(t, w, []byte(`{
   "apiVersion":"gcp.managed.openshift.io/v1",
   "kind":"Version",
   "metadata":{"name":"4.22.14","managedFields":[{"manager":"gecko-controllers","fieldsV1":{"f:spec":{"f:releaseImage":{}}}}]},
@@ -153,7 +237,7 @@ func TestVersionGetCommandNotFound(t *testing.T) {
 	client := versionTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound"}`))
+		writeVersionFixture(t, w, []byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound"}`))
 	})
 
 	err, stdout, _ := executeVersionTestCommand(t, client, "get", "4.19.99")
