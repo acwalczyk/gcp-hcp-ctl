@@ -147,8 +147,8 @@ func clusterNameArgs(cmd *cobra.Command, args []string) error {
 func addUpgradePolicyFlags(cmd *cobra.Command, opts *upgradePolicyOptions) {
 	cmd.Flags().StringVar(&opts.start, "start", "", "First maintenance window start in RFC 3339 UTC format (required)")
 	cmd.Flags().Int32Var(&opts.durationMinutes, "duration-minutes", 0, "Maintenance window duration in minutes (required)")
-	cmd.Flags().StringVar(&opts.frequency, "frequency", "weekly", "Maintenance window frequency")
-	cmd.Flags().StringSliceVar(&opts.days, "day", nil, "Maintenance window day, repeat for multiple days (required)")
+	cmd.Flags().StringVar(&opts.frequency, "frequency", "weekly", "Maintenance window frequency (weekly)")
+	cmd.Flags().StringSliceVar(&opts.days, "day", nil, "Maintenance window day as a lowercase full weekday name; repeat for multiple days (required)")
 	cmd.Flags().StringArrayVar(&opts.exclusions, "exclusion", nil, "Exclusion as name,start,end; repeat for multiple exclusions")
 	cmd.Flags().StringVarP(&opts.outputFmt, "output", "o", "text", "Output format: text, json, yaml")
 	_ = cmd.MarkFlagRequired("start")
@@ -166,6 +166,21 @@ func (o *upgradePolicyOptions) build(clusterName string) (*gcpv1.ControlPlaneUpg
 	}
 	if len(o.days) == 0 {
 		return nil, fmt.Errorf("at least one --day is required")
+	}
+	if o.frequency != "weekly" {
+		return nil, fmt.Errorf("--frequency must be weekly")
+	}
+	seenDays := make(map[string]struct{}, len(o.days))
+	for _, day := range o.days {
+		switch day {
+		case "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
+		default:
+			return nil, fmt.Errorf("--day contains invalid day %q; use lowercase full weekday names", day)
+		}
+		if _, duplicate := seenDays[day]; duplicate {
+			return nil, fmt.Errorf("--day contains duplicate day %q", day)
+		}
+		seenDays[day] = struct{}{}
 	}
 
 	exclusions, err := parseExclusions(o.exclusions)

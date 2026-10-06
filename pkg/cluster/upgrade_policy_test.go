@@ -121,6 +121,41 @@ func TestBuildUpgradePolicy(t *testing.T) {
 	}
 }
 
+func TestBuildUpgradePolicyRecurrence(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		frequency string
+		days      []string
+		wantError string
+	}{
+		{name: "all weekdays", frequency: "weekly", days: []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}},
+		{name: "unsupported frequency", frequency: "daily", days: []string{"monday"}, wantError: "--frequency must be weekly"},
+		{name: "empty frequency", days: []string{"monday"}, wantError: "--frequency must be weekly"},
+		{name: "missing days", frequency: "weekly", wantError: "at least one --day is required"},
+		{name: "abbreviated day", frequency: "weekly", days: []string{"mon"}, wantError: `invalid day "mon"`},
+		{name: "uppercase day", frequency: "weekly", days: []string{"Monday"}, wantError: `invalid day "Monday"`},
+		{name: "empty day", frequency: "weekly", days: []string{""}, wantError: `invalid day ""`},
+		{name: "duplicate day", frequency: "weekly", days: []string{"monday", "friday", "monday"}, wantError: `duplicate day "monday"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := upgradePolicyOptions{start: "2026-10-10T02:00:00Z", durationMinutes: 240, frequency: tc.frequency, days: tc.days}
+			policy, err := opts.build("upgrade-poc")
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := policy.Spec.MaintenanceWindow.Recurrence; got.Frequency != tc.frequency || strings.Join(got.DaysOfWeek, ",") != strings.Join(tc.days, ",") {
+				t.Errorf("unexpected recurrence: %+v", got)
+			}
+		})
+	}
+}
+
 func TestBuildUpgradePolicyRejectsInvalidExclusion(t *testing.T) {
 	opts := upgradePolicyOptions{
 		start:           "2026-10-03T02:00:00Z",
