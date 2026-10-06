@@ -339,45 +339,54 @@ type controlPlaneUpgradePolicyClient struct {
 
 func (c *controlPlaneUpgradePolicyClient) Create(ctx context.Context, namespace string, policy *gcpv1.ControlPlaneUpgradePolicy) (*gcpv1.ControlPlaneUpgradePolicy, error) {
 	result := &gcpv1.ControlPlaneUpgradePolicy{}
-	err := c.restClient.Post().
+	response := c.restClient.Post().
+		MaxRetries(0).
 		Namespace(namespace).
 		Resource("controlplaneupgradepolicies").
 		Body(policy).
-		Do(ctx).
-		Into(result)
-	return result, err
+		Do(ctx)
+	if err := decodeResult(response, result, http.MethodPost, "controlplaneupgradepolicies", policy.Name, true); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (c *controlPlaneUpgradePolicyClient) Get(ctx context.Context, namespace, name string) (*gcpv1.ControlPlaneUpgradePolicy, error) {
 	result := &gcpv1.ControlPlaneUpgradePolicy{}
-	err := c.restClient.Get().
+	response := c.restClient.Get().
 		Namespace(namespace).
 		Resource("controlplaneupgradepolicies").
 		Name(name).
-		Do(ctx).
-		Into(result)
-	return result, err
+		Do(ctx)
+	if err := decodeResult(response, result, http.MethodGet, "controlplaneupgradepolicies", name, false); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (c *controlPlaneUpgradePolicyClient) Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.ControlPlaneUpgradePolicy, error) {
 	result := &gcpv1.ControlPlaneUpgradePolicy{}
-	err := c.restClient.Patch(types.MergePatchType).
+	response := c.restClient.Patch(types.MergePatchType).
+		MaxRetries(0).
 		Namespace(namespace).
 		Resource("controlplaneupgradepolicies").
 		Name(name).
 		Body(patchData).
-		Do(ctx).
-		Into(result)
-	return result, err
+		Do(ctx)
+	if err := decodeResult(response, result, http.MethodPatch, "controlplaneupgradepolicies", name, false); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (c *controlPlaneUpgradePolicyClient) Delete(ctx context.Context, namespace, name string) error {
-	return c.restClient.Delete().
+	response := c.restClient.Delete().
+		MaxRetries(0).
 		Namespace(namespace).
 		Resource("controlplaneupgradepolicies").
 		Name(name).
-		Do(ctx).
-		Error()
+		Do(ctx)
+	return normalizeResult(response, http.MethodDelete, "controlplaneupgradepolicies", name, false)
 }
 
 // NamespaceForProject returns the namespace for a given GCP project ID.
