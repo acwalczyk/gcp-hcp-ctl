@@ -337,6 +337,7 @@ type controlPlaneUpgradePolicyClient struct {
 	restClient rest.Interface
 }
 
+// Create posts a policy without retries and reports uncertain write outcomes.
 func (c *controlPlaneUpgradePolicyClient) Create(ctx context.Context, namespace string, policy *gcpv1.ControlPlaneUpgradePolicy) (*gcpv1.ControlPlaneUpgradePolicy, error) {
 	result := &gcpv1.ControlPlaneUpgradePolicy{}
 	response := c.restClient.Post().
@@ -351,6 +352,7 @@ func (c *controlPlaneUpgradePolicyClient) Create(ctx context.Context, namespace 
 	return result, nil
 }
 
+// Get retrieves a policy and normalizes request and response decoding errors.
 func (c *controlPlaneUpgradePolicyClient) Get(ctx context.Context, namespace, name string) (*gcpv1.ControlPlaneUpgradePolicy, error) {
 	result := &gcpv1.ControlPlaneUpgradePolicy{}
 	response := c.restClient.Get().
@@ -364,6 +366,7 @@ func (c *controlPlaneUpgradePolicyClient) Get(ctx context.Context, namespace, na
 	return result, nil
 }
 
+// Patch applies a JSON Merge Patch without retries and returns the updated policy.
 func (c *controlPlaneUpgradePolicyClient) Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.ControlPlaneUpgradePolicy, error) {
 	result := &gcpv1.ControlPlaneUpgradePolicy{}
 	response := c.restClient.Patch(types.MergePatchType).
@@ -379,6 +382,7 @@ func (c *controlPlaneUpgradePolicyClient) Patch(ctx context.Context, namespace, 
 	return result, nil
 }
 
+// Delete removes a policy without retries and normalizes API errors.
 func (c *controlPlaneUpgradePolicyClient) Delete(ctx context.Context, namespace, name string) error {
 	response := c.restClient.Delete().
 		MaxRetries(0).

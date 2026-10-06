@@ -24,6 +24,7 @@ type upgradePolicyOptions struct {
 	outputFmt       string
 }
 
+// newCreateUpgradePolicyCmd creates a policy after verifying that the cluster exists.
 func newCreateUpgradePolicyCmd() *cobra.Command {
 	opts := &upgradePolicyOptions{}
 	cmd := &cobra.Command{
@@ -37,7 +38,6 @@ func newCreateUpgradePolicyCmd() *cobra.Command {
 			}
 
 			client := clientFromCmd(cmd)
-			//Check if cluster exists
 			if _, err := client.ResolveCluster(cmd.Context(), args[0]); err != nil {
 				return err
 			}
@@ -52,6 +52,7 @@ func newCreateUpgradePolicyCmd() *cobra.Command {
 	return cmd
 }
 
+// newGetUpgradePolicyCmd retrieves a policy in the requested output format.
 func newGetUpgradePolicyCmd() *cobra.Command {
 	var outputFmt string
 	cmd := &cobra.Command{
@@ -71,13 +72,16 @@ func newGetUpgradePolicyCmd() *cobra.Command {
 	return cmd
 }
 
+// newUpdateUpgradePolicyCmd updates the window and optionally replaces or clears exclusions.
 func newUpdateUpgradePolicyCmd() *cobra.Command {
 	opts := &upgradePolicyOptions{}
 	var clearExclusions bool
 	cmd := &cobra.Command{
 		Use:   "update-upgrade-policy <cluster-name>",
 		Short: "Update a control-plane upgrade policy",
-		Args:  clusterNameArgs,
+		Long: "Update the weekly maintenance window. Existing maintenance exclusions are preserved " +
+			"unless --exclusion replaces them or --clear-exclusions removes them.",
+		Args: clusterNameArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			policy, err := opts.build(args[0])
 			if err != nil {
@@ -114,6 +118,7 @@ func newUpdateUpgradePolicyCmd() *cobra.Command {
 	return cmd
 }
 
+// newDeleteUpgradePolicyCmd requires explicit confirmation before deleting a policy.
 func newDeleteUpgradePolicyCmd() *cobra.Command {
 	var confirm bool
 	cmd := &cobra.Command{
@@ -137,6 +142,7 @@ func newDeleteUpgradePolicyCmd() *cobra.Command {
 	return cmd
 }
 
+// clusterNameArgs requires one cluster name and includes usage when it is missing.
 func clusterNameArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("cluster name is required\n\nUsage: %s", cmd.UseLine())
@@ -144,6 +150,7 @@ func clusterNameArgs(cmd *cobra.Command, args []string) error {
 	return cobra.ExactArgs(1)(cmd, args)
 }
 
+// addUpgradePolicyFlags registers the shared schedule, exclusion, and output flags.
 func addUpgradePolicyFlags(cmd *cobra.Command, opts *upgradePolicyOptions) {
 	cmd.Flags().StringVar(&opts.start, "start", "", "First maintenance window start in RFC 3339 UTC format (required)")
 	cmd.Flags().Int32Var(&opts.durationMinutes, "duration-minutes", 0, "Maintenance window duration in minutes (required)")
@@ -159,6 +166,7 @@ func addUpgradePolicyFlags(cmd *cobra.Command, opts *upgradePolicyOptions) {
 	}
 }
 
+// build validates schedule inputs and constructs a policy with UTC timestamps.
 func (o *upgradePolicyOptions) build(clusterName string) (*gcpv1.ControlPlaneUpgradePolicy, error) {
 	start, err := time.Parse(time.RFC3339, o.start)
 	if err != nil {
@@ -212,6 +220,7 @@ func (o *upgradePolicyOptions) build(clusterName string) (*gcpv1.ControlPlaneUpg
 	}, nil
 }
 
+// parseExclusions decodes repeated name,start,end values and normalizes times to UTC.
 func parseExclusions(values []string) ([]gcpv1.ControlPlaneMaintenanceExclusion, error) {
 	exclusions := make([]gcpv1.ControlPlaneMaintenanceExclusion, 0, len(values))
 	for _, value := range values {
@@ -236,6 +245,7 @@ func parseExclusions(values []string) ([]gcpv1.ControlPlaneMaintenanceExclusion,
 	return exclusions, nil
 }
 
+// printUpgradePolicy writes text, JSON, or YAML without modifying the supplied policy.
 func printUpgradePolicy(w io.Writer, policy *gcpv1.ControlPlaneUpgradePolicy, format string) error {
 	policy = policy.DeepCopy()
 	if policy.APIVersion == "" {
