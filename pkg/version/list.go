@@ -56,6 +56,14 @@ func newListCmd() *cobra.Command {
 				left, leftErr := utilversion.ParseSemantic(items[i].Name)
 				right, rightErr := utilversion.ParseSemantic(items[j].Name)
 				if leftErr != nil || rightErr != nil {
+					// Put valid versions first; compare unparseable names only
+					// with each other so the ordering remains transitive.
+					if leftErr == nil {
+						return true
+					}
+					if rightErr == nil {
+						return false
+					}
 					return items[i].Name < items[j].Name
 				}
 				return left.LessThan(right)

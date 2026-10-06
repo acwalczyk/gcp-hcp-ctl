@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -164,6 +165,43 @@ func TestVersionListCommand(t *testing.T) {
 	}
 	if strings.Index(stdout, "4.22.2") > strings.Index(stdout, "4.22.10") {
 		t.Errorf("versions are not semantically ordered:\n%s", stdout)
+	}
+}
+
+func TestVersionListMixedNamesHaveConsistentOrder(t *testing.T) {
+	for _, names := range [][]string{
+		{"4.22.2", "4.22.10", "4.22.11x"},
+		{"4.22.2", "4.22.11x", "4.22.10"},
+		{"4.22.10", "4.22.2", "4.22.11x"},
+		{"4.22.10", "4.22.11x", "4.22.2"},
+		{"4.22.11x", "4.22.2", "4.22.10"},
+		{"4.22.11x", "4.22.10", "4.22.2"},
+	} {
+		t.Run(strings.Join(names, "_"), func(t *testing.T) {
+			client := versionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "/channels") {
+					writeVersionFixture(t, w, []byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"ChannelList","items":[]}`))
+					return
+				}
+				items := make([]string, len(names))
+				for i, name := range names {
+					items[i] = fmt.Sprintf(`{"metadata":{"name":%q}}`, name)
+				}
+				writeVersionFixture(t, w, []byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"VersionList","items":[`+strings.Join(items, ",")+`]}`))
+			})
+			err, stdout, _ := executeVersionTestCommand(t, client, "list")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, line := range strings.Split(strings.TrimSpace(stdout), "\n")[1:] {
+				got = append(got, strings.Fields(line)[0])
+			}
+			if want := "4.22.2,4.22.10,4.22.11x"; strings.Join(got, ",") != want {
+				t.Errorf("ordering = %v, want %s", got, want)
+			}
+		})
 	}
 }
 
