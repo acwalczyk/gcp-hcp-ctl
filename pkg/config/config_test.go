@@ -47,6 +47,27 @@ func TestLoad_APIConfig(t *testing.T) {
 	}
 }
 
+func TestLoad_RegionAndEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := "region: us-central1\nenvironment: integration\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Region != "us-central1" {
+		t.Errorf("expected region 'us-central1', got %q", cfg.Region)
+	}
+	if cfg.Environment != "integration" {
+		t.Errorf("expected environment 'integration', got %q", cfg.Environment)
+	}
+}
+
 func TestLoad_PartialConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -153,5 +174,79 @@ func TestDefaultConfigPath(t *testing.T) {
 	}
 	if filepath.Base(path) != "config.yaml" {
 		t.Errorf("expected path to end with 'config.yaml', got %q", path)
+	}
+}
+
+func TestLoad_EnvAlias(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"env alias key", "env: dev\n", "dev"},
+		{"canonical environment key", "environment: integration\n", "integration"},
+		{"canonical wins when both set", "environment: integration\nenv: dev\n", "integration"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.Environment != tc.want {
+				t.Errorf("expected environment %q, got %q", tc.want, cfg.Environment)
+			}
+		})
+	}
+}
+
+func TestResolvePrecedence(t *testing.T) {
+	file := Config{Project: "file-project", Region: "file-region", Environment: "dev", Output: "json", APIEndpoint: "file-api", OIDCEndpoint: "file-oidc"}
+	environment := Config{Project: "env-project", Environment: "stage", APIEndpoint: "env-api"}
+	flags := Config{Project: "flag-project", Region: "flag-region", OIDCEndpoint: "flag-oidc"}
+
+	got := Resolve(flags, environment, file, false)
+	want := Config{Project: "flag-project", Region: "flag-region", Environment: "stage", Output: "json", APIEndpoint: "env-api", OIDCEndpoint: "flag-oidc"}
+	if got != want {
+		t.Errorf("Resolve() = %+v, want %+v", got, want)
+	}
+	if file.Project != "file-project" || environment.Project != "env-project" || flags.Project != "flag-project" {
+		t.Fatal("Resolve changed a source value")
+	}
+}
+
+func TestResolveOutput(t *testing.T) {
+	file := Config{Output: "json"}
+	if got := Resolve(Config{Output: "yaml"}, Config{}, file, false).Output; got != "json" {
+		t.Errorf("unchanged output flag should use config file, got %q", got)
+	}
+	if got := Resolve(Config{Output: "yaml"}, Config{}, file, true).Output; got != "yaml" {
+		t.Errorf("explicit output flag should win, got %q", got)
+	}
+	if got := Resolve(Config{}, Config{}, file, true).Output; got != "" {
+		t.Errorf("explicit empty output flag should win, got %q", got)
+	}
+	if got := Resolve(Config{}, Config{}, Config{}, false).Output; got != "text" {
+		t.Errorf("default output should be text, got %q", got)
+	}
+}
+
+func TestFromEnvironment(t *testing.T) {
+	values := map[string]string{
+		"GCPHCPCTL_PROJECT":       "project",
+		"GCPHCPCTL_REGION":        "region",
+		"GCPHCPCTL_ENVIRONMENT":   "environment",
+		"GCPHCPCTL_API_ENDPOINT":  "api",
+		"GCPHCPCTL_OIDC_ENDPOINT": "oidc",
+	}
+	got := FromEnvironment(func(name string) string { return values[name] })
+	want := Config{Project: "project", Region: "region", Environment: "environment", APIEndpoint: "api", OIDCEndpoint: "oidc"}
+	if got != want {
+		t.Errorf("FromEnvironment() = %+v, want %+v", got, want)
 	}
 }

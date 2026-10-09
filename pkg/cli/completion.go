@@ -6,8 +6,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func init() {
-	rootCmd.AddCommand(&cobra.Command{
+func newCompletionCmd(rootCmd *cobra.Command) *cobra.Command {
+	return &cobra.Command{
 		Use:   "completion [bash|zsh|fish|powershell]",
 		Short: "Generate shell completion scripts",
 		Long: `Generate shell completion scripts for gcphcpctl.
@@ -40,5 +40,5 @@ Fish:
 			}
 			return nil
 		},
-	})
+	}
 }

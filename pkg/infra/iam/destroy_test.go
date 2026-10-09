@@ -3,6 +3,8 @@ package iam
 import (
 	"strings"
 	"testing"
+
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
 )
 
 func TestDestroyOptionsValidateInputs(t *testing.T) {
@@ -83,7 +85,7 @@ func TestNewDestroyCommand(t *testing.T) {
 }
 
 func TestNewCreateCommand(t *testing.T) {
-	cmd := NewCreateCommand()
+	cmd := NewCreateCommand(&config.Config{})
 
 	if cmd == nil {
 		t.Fatal("expected command to be non-nil")
@@ -110,7 +112,7 @@ func TestNewCreateCommand(t *testing.T) {
 }
 
 func TestNewIAMCmd(t *testing.T) {
-	cmd := NewIAMCmd()
+	cmd := NewIAMCmd(&config.Config{})
 
 	if cmd == nil {
 		t.Fatal("expected command to be non-nil")

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/discovery"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +36,10 @@ type WorkloadIdentityConfig struct {
 	Audience   string `json:"audience"`
 }
 
-func NewCreateCommand() *cobra.Command {
+// NewCreateCommand returns the "iam create" command. Unless the caller passes a
+// complete --oidc-issuer-url or an --oidc-jwks-file, the OIDC issuer is derived
+// from effective: discovered from --env/--region, or an explicit endpoint.
+func NewCreateCommand(effective *config.Config) *cobra.Command {
 	opts := &CreateOptions{}
 
 	cmd := &cobra.Command{
@@ -52,10 +57,19 @@ All operations are idempotent and safe to run multiple times.`,
 			opts.InfraID = args[0]
 			opts.ProjectID, _ = cmd.Flags().GetString("project")
 
-			if opts.OIDCIssuerURL == "" {
-				if base, _ := cmd.Flags().GetString("oidc-endpoint"); base != "" {
-					opts.OIDCIssuerURL = fmt.Sprintf("%s/%s", strings.TrimRight(base, "/"), opts.InfraID)
+			// Derive the issuer URL from the OIDC endpoint only when the caller
+			// hasn't supplied a complete issuer URL or a JWKS file. The endpoint is
+			// discovered from --env/--region, or taken from an explicit flag,
+			// environment variable, or config value.
+			if opts.OIDCIssuerURL == "" && opts.ClusterOIDCJWKSFile == "" {
+				info, err := discovery.NewResolver().Region(cmd.Context(), effective)
+				if err != nil {
+					return err
 				}
+				if info.OIDCIssuer == "" {
+					return discovery.EndpointRequiredError(discovery.KindOIDC, effective.Environment)
+				}
+				opts.OIDCIssuerURL = fmt.Sprintf("%s/%s", strings.TrimRight(info.OIDCIssuer, "/"), opts.InfraID)
 			}
 
 			return opts.ValidateInputs()
@@ -68,7 +82,7 @@ All operations are idempotent and safe to run multiple times.`,
 
 	cmd.Flags().StringVar(&opts.ClusterOIDCJWKSFile, "oidc-jwks-file", "", "Path to a local JSON file containing OIDC provider's public key in JWKS format")
 	cmd.Flags().StringVar(&opts.OutputFile, "output-file", "", "Path to output JSON file with GSA details (default: stdout)")
-	cmd.Flags().StringVar(&opts.OIDCIssuerURL, "oidc-issuer-url", "", "OIDC issuer URL for WIF provider (defaults to {oidc-endpoint}/{infra-id})")
+	cmd.Flags().StringVar(&opts.OIDCIssuerURL, "oidc-issuer-url", "", "OIDC issuer URL for WIF provider (defaults to the discovered OIDC endpoint + /{infra-id})")
 
 	return cmd
 }
@@ -194,4 +208,3 @@ func (o *CreateOptions) ValidateJWKSFile() error {
 
 	return nil
 }
-

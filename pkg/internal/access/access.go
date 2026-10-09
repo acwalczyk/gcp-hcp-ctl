@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/discovery"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	"github.com/spf13/cobra"
@@ -34,11 +36,20 @@ func Group(name, short string) *cobra.Command {
 		}
 		project, _ := cmd.Flags().GetString("project")
 		endpoint, _ := cmd.Flags().GetString("api-endpoint")
+		region, _ := cmd.Flags().GetString("region")
+		environment, _ := cmd.Flags().GetString("environment")
 		if strings.TrimSpace(project) == "" {
 			return fmt.Errorf("--project is required (or set GCPHCPCTL_PROJECT or project in config)")
 		}
+		info, err := discovery.NewResolver().Region(cmd.Context(), &config.Config{
+			Region: region, Environment: environment, APIEndpoint: endpoint,
+		})
+		if err != nil {
+			return err
+		}
+		endpoint = info.PlatformAPIEndpoint
 		if strings.TrimSpace(endpoint) == "" {
-			return fmt.Errorf("--api-endpoint is required (or set GCPHCPCTL_API_ENDPOINT or api_endpoint in config)")
+			return discovery.EndpointRequiredError(discovery.KindAPI, environment)
 		}
 		if Client(cmd) != nil {
 			return nil

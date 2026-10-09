@@ -3,11 +3,15 @@ package iam
 import (
 	"fmt"
 
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
 	"github.com/spf13/cobra"
 )
 
 // NewIAMCmd returns the parent "iam" command with create/destroy subcommands.
-func NewIAMCmd() *cobra.Command {
+// effective is the resolved (merged) configuration; `iam create` uses it to
+// discover the OIDC issuer from --env/--region, or to read an explicitly
+// configured one.
+func NewIAMCmd(effective *config.Config) *cobra.Command {
 	var iamCmd *cobra.Command
 	iamCmd = &cobra.Command{
 		Use:   "iam",
@@ -25,7 +29,7 @@ with IAM role bindings.`,
 		},
 	}
 
-	iamCmd.AddCommand(NewCreateCommand())
+	iamCmd.AddCommand(NewCreateCommand(effective))
 	iamCmd.AddCommand(NewDestroyCommand())
 
 	return iamCmd

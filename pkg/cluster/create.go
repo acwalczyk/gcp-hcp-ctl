@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/discovery"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/infra/iam"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/infra/network"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
@@ -141,9 +142,10 @@ func (o *createOptions) run(cmd *cobra.Command, clusterName string) error {
 		return fmt.Errorf("--channel-group is required")
 	}
 
-	oidcBase, _ := cmd.Flags().GetString("oidc-endpoint")
+	oidcBase := regionInfoFromCmd(cmd).OIDCIssuer
 	if oidcBase == "" {
-		return fmt.Errorf("--oidc-endpoint is required (or set GCPHCPCTL_OIDC_ENDPOINT or oidc_endpoint in config)")
+		environment, _ := cmd.Flags().GetString("environment")
+		return discovery.EndpointRequiredError(discovery.KindOIDC, environment)
 	}
 
 	client := clientFromCmd(cmd)

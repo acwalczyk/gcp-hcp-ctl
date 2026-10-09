@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/discovery"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
@@ -20,8 +22,10 @@ type contextKey string
 
 const clientKey contextKey = "platform-api-client"
 
-// NewNodePoolCmd returns the "nodepool" command group.
-func NewNodePoolCmd() *cobra.Command {
+// NewNodePoolCmd returns the "nodepool" command group. effective carries the
+// resolved configuration (including the discovered platform API endpoint),
+// populated by the root command's PersistentPreRunE before any subcommand runs.
+func NewNodePoolCmd(effective *config.Config) *cobra.Command {
 	var npCmd *cobra.Command
 	npCmd = &cobra.Command{
 		Use:          "nodepool",
@@ -34,12 +38,14 @@ func NewNodePoolCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := validateRequiredFlags(cmd); err != nil {
+			info, err := discovery.NewResolver().Region(cmd.Context(), effective)
+			if err != nil {
 				return err
 			}
-			apiEndpoint, _ := cmd.Flags().GetString("api-endpoint")
-			project, _ := cmd.Flags().GetString("project")
-			client, err := newClient(apiEndpoint, project)
+			if info.PlatformAPIEndpoint == "" {
+				return discovery.EndpointRequiredError(discovery.KindAPI, effective.Environment)
+			}
+			client, err := newClient(info.PlatformAPIEndpoint, effective.Project)
 			if err != nil {
 				return err
 			}
@@ -55,14 +61,6 @@ func NewNodePoolCmd() *cobra.Command {
 	npCmd.AddCommand(newScaleCmd())
 
 	return npCmd
-}
-
-func validateRequiredFlags(cmd *cobra.Command) error {
-	apiEndpoint, _ := cmd.Flags().GetString("api-endpoint")
-	if apiEndpoint == "" {
-		return fmt.Errorf("--api-endpoint is required (or set GCPHCPCTL_API_ENDPOINT or api_endpoint in config)")
-	}
-	return nil
 }
 
 func newClient(apiEndpoint, project string) (*platformapi.Client, error) {

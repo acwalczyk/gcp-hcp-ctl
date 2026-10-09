@@ -64,7 +64,10 @@ gcphcpctl cluster login my-cluster
 gcphcpctl cluster login my-cluster --kubeconfig ~/.kube/config
 ```
 
-Cluster commands require `--api-endpoint` (or `GCPHCPCTL_API_ENDPOINT` / `api_endpoint` in config) pointing to the platform API server.
+Cluster commands use the platform API endpoint discovered from `--region` and
+`--env` (or their environment variables or config keys). To override the API
+endpoint, set `--api-endpoint`, `GCPHCPCTL_API_ENDPOINT`, or the `api_endpoint`
+config key.
 
 ### Nodepool Management (`nodepool`)
 
@@ -97,7 +100,8 @@ gcphcpctl nodepool scale my-nodepool --replicas 5
 gcphcpctl nodepool delete my-nodepool --confirm
 ```
 
-Nodepool commands require `--api-endpoint` (or `GCPHCPCTL_API_ENDPOINT` / `api_endpoint` in config) pointing to the platform API server.
+Nodepool commands use the same endpoint discovery as cluster commands, and the
+same `GCPHCPCTL_API_ENDPOINT` / `api_endpoint` escape hatch to bypass it.
 
 ### Platform API errors and troubleshooting
 
@@ -243,15 +247,50 @@ gcphcpctl ops wf resume approval-flow <execution-id> --data '{"approved": true}'
 
 Configuration priority: **CLI flags > environment variables > config file**.
 
+For cluster and nodepool commands, set a public GCP region and environment to
+discover the platform API endpoint. `cluster create` also discovers the OIDC
+issuer. Explicit endpoint values take precedence over discovery, including
+values in the config file.
+
+```bash
+gcphcpctl regions list --env integration
+gcphcpctl cluster list --region us-central1 --env integration
+gcphcpctl cluster create my-cluster --region us-central1 --env integration \
+  --version 4.22.0-rc.5 --setup-infra --project my-project
+```
+
 | Flag | Env Var | Config Key | Description |
 |------|---------|------------|-------------|
 | `--project` | `GCPHCPCTL_PROJECT` | `project` | GCP project ID |
 | `--region` | `GCPHCPCTL_REGION` | `region` | GCP region |
-| `--api-endpoint` | `GCPHCPCTL_API_ENDPOINT` | `api_endpoint` | Platform API endpoint (required for `cluster` commands) |
-| `--oidc-endpoint` | `GCPHCPCTL_OIDC_ENDPOINT` | `oidc_endpoint` | OIDC issuer base URL (required for `cluster create`) |
+| `--environment` / `--env` | `GCPHCPCTL_ENVIRONMENT` | `environment` / `env` | Environment for endpoint discovery |
 | `--output` / `-o` | - | `output` | Output format: `text`, `json`, `yaml` |
+| `--api-endpoint` | `GCPHCPCTL_API_ENDPOINT` | `api_endpoint` | Explicit platform API endpoint; overrides discovery |
+| `--oidc-endpoint` | `GCPHCPCTL_OIDC_ENDPOINT` | `oidc_endpoint` | Explicit OIDC issuer base URL; overrides discovery |
 
 Config file location: `~/.gcphcpctl/config.yaml`
+
+### Endpoint discovery
+
+Service endpoints are discovered from `--env` and `--region`. `--env` accepts a
+known environment name (`integration`, `stage`, `production`) that maps to a
+discovery subdomain, or — for a shared dev sector or an ephemeral CI run — the
+discovery subdomain itself, e.g.:
+
+```bash
+gcphcpctl regions list --env integration
+gcphcpctl regions list --env <infra-id>.dev
+```
+
+The manifest URL is always `https://discovery.{env}.gcp-hcp.devshift.net/v1/regions.json`,
+and every endpoint it advertises must be HTTPS under `gcp-hcp.devshift.net`.
+
+**Precedence:** explicit endpoint flags, environment variables, and config values
+win over discovery, in that order. Missing endpoints are discovered from
+`--env` and `--region`. If both endpoints are explicit, it does not fetch a
+manifest and neither `--env` nor `--region` is required. This keeps existing
+scripts using both `--api-endpoint` and `--oidc-endpoint` working.
+For an environment without a discovery manifest, supply the endpoints explicitly.
 
 ## Project Structure
 
@@ -263,6 +302,8 @@ pkg/
 ├── nodepool/         Nodepool commands (create, get, list, scale, delete)
 ├── auth/             Authentication and token management
 ├── platformapi/      Platform API client
+├── discovery/        Endpoint discovery manifest client and resolver
+├── regions/          List regions advertised by discovery
 ├── infra/
 │   ├── iam/          IAM infrastructure orchestration and CLI commands
 │   └── network/      Network infrastructure orchestration and CLI commands
@@ -333,8 +374,9 @@ The CLI has the following command categories:
   extraction into a standalone plugin binary (`gcphcpctl-ops`). A stub entry
   point exists at `cmd/ops/main.go` for when that separation is needed.
 
-All commands inherit global `--project` and `--region` flags from the root
-command. Cluster commands additionally require `--api-endpoint`. Configuration
+All commands inherit global `--project`, `--region`, and `--environment` flags
+from the root command. Cluster and nodepool commands require either an explicit
+platform API endpoint or a discoverable region and environment. Configuration
 follows the priority: CLI flags > environment variables > config file.
 
 ## Related Repositories

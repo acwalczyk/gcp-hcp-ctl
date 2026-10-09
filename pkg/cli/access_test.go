@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/spf13/cobra"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +18,7 @@ import (
 func TestAccessCommandDiscovery(t *testing.T) {
 	for group, verbs := range map[string][]string{"role": {"create", "update", "list", "get", "delete"}, "rolebinding": {"create", "list", "get", "delete"}} {
 		for _, verb := range verbs {
-			cmd, remaining, err := rootCmd.Find([]string{group, verb})
+			cmd, remaining, err := newRootCmd().Find([]string{group, verb})
 			if err != nil || len(remaining) != 0 || cmd.Name() != verb || cmd.Parent().Name() != group {
 				t.Fatalf("%s %s: %v", group, verb, err)
 			}
@@ -31,17 +30,6 @@ func TestAccessCommandDiscovery(t *testing.T) {
 }
 
 func TestAccessResolvedConfiguration(t *testing.T) {
-	// The root uses global flag variables. Save and restore them; do not run in parallel.
-	oldProject, oldEndpoint, oldFormat, oldConfig := project, apiEndpoint, outputFormat, configPath
-	oldOut, oldErr, oldCtx := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr(), rootCmd.Context()
-	defer func() {
-		project, apiEndpoint, outputFormat, configPath = oldProject, oldEndpoint, oldFormat, oldConfig
-		rootCmd.SetOut(oldOut)
-		rootCmd.SetErr(oldErr)
-		rootCmd.SetContext(oldCtx)
-		rootCmd.SetArgs(nil)
-		rootCmd.PersistentFlags().Lookup("output").Changed = false
-	}()
 	for _, format := range []string{"json", "yaml"} {
 		for _, override := range []bool{false, true} {
 			t.Run(fmt.Sprint(format, override), func(t *testing.T) {
@@ -53,33 +41,26 @@ func TestAccessResolvedConfiguration(t *testing.T) {
 					fmt.Fprint(w, `{"apiVersion":"gcp.managed.openshift.io/v1","kind":"RoleList","items":[]}`)
 				}))
 				defer server.Close()
-				configPath = filepath.Join(t.TempDir(), "config.yaml")
+				configPath := filepath.Join(t.TempDir(), "config.yaml")
 				if err := os.WriteFile(configPath, []byte("project: customer\napi_endpoint: "+server.URL+"\noutput: "+format+"\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				project, apiEndpoint, outputFormat = "", "", "text"
-				rootCmd.PersistentFlags().Lookup("output").Changed = false
 				c, _ := platformapi.NewClientForTest(server.URL, "customer")
-				var resetContext func(*cobra.Command)
-				resetContext = func(cmd *cobra.Command) {
-					cmd.SetContext(nil)
-					for _, child := range cmd.Commands() {
-						resetContext(child)
-					}
-				}
-				resetContext(rootCmd)
-				rootCmd.SetContext(access.WithClient(context.Background(), c))
+				root := newRootCmd()
+				root.SetContext(access.WithClient(context.Background(), c))
 				var out, stderr bytes.Buffer
-				rootCmd.SetOut(&out)
-				rootCmd.SetErr(&stderr)
-				args := []string{"role", "list"}
+				root.SetOut(&out)
+				root.SetErr(&stderr)
+				args := []string{"role", "list", "--config", configPath}
 				if override {
 					args = append(args, "--output", "text")
 				}
-				rootCmd.SetArgs(args)
-				if err := rootCmd.Execute(); err != nil {
+				root.SetArgs(args)
+				if err := root.Execute(); err != nil {
 					t.Fatal(err)
 				}
+				project, _ := root.PersistentFlags().GetString("project")
+				apiEndpoint, _ := root.PersistentFlags().GetString("api-endpoint")
 				if project != "customer" || apiEndpoint != server.URL {
 					t.Fatal(project, apiEndpoint)
 				}
@@ -95,5 +76,16 @@ func TestAccessResolvedConfiguration(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAccessEndpointDiscoveryRequiresRegion(t *testing.T) {
+	t.Setenv("GCPHCPCTL_API_ENDPOINT", "")
+	t.Setenv("GCPHCPCTL_REGION", "")
+	root := newRootCmd()
+	root.SetArgs([]string{"role", "list", "--project", "customer", "--env", "int", "--config", filepath.Join(t.TempDir(), "missing.yaml")})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--region is required for endpoint discovery") {
+		t.Fatalf("expected missing region error, got %v", err)
 	}
 }
