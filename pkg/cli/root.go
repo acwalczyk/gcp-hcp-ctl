@@ -11,6 +11,8 @@ import (
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/infra/network"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/nodepool"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/ops"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/role"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/rolebinding"
 
 	"github.com/spf13/cobra"
 )
@@ -78,6 +80,8 @@ func init() {
 	rootCmd.AddCommand(ops.NewOpsCmd())
 	rootCmd.AddCommand(iam.NewIAMCmd())
 	rootCmd.AddCommand(network.NewNetworkCmd())
+	rootCmd.AddCommand(role.NewRoleCmd())
+	rootCmd.AddCommand(rolebinding.NewRoleBindingCmd())
 	rootCmd.AddCommand(cluster.NewClusterCmd())
 	rootCmd.AddCommand(nodepool.NewNodePoolCmd())
 }

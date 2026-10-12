@@ -21,7 +21,7 @@ type uncertainOutcomeError struct{ cause error }
 func (e *uncertainOutcomeError) Error() string { return e.cause.Error() + checkBeforeRetrying }
 func (e *uncertainOutcomeError) Unwrap() error { return e.cause }
 
-// IsUncertainOutcome reports whether a non-idempotent Platform API write may
+// IsUncertainOutcome reports whether a non-repeatable Platform API write may
 // have taken effect and its resource should be inspected before retrying.
 func IsUncertainOutcome(err error) bool {
 	var uncertain *uncertainOutcomeError
@@ -62,7 +62,8 @@ func normalizeResult(result rest.Result, method, resource, name string, nonIdemp
 		status = &decoded
 	}
 	err := newHTTPError(method, resource, name, statusCode, status, body)
-	if nonIdempotent && (statusCode >= http.StatusInternalServerError || statusCode == http.StatusConflict) {
+	// A versioned PUT conflict is a definite rejection, not an ambiguous write.
+	if nonIdempotent && (statusCode >= http.StatusInternalServerError || (statusCode == http.StatusConflict && method != http.MethodPut)) {
 		return &uncertainOutcomeError{cause: err}
 	}
 	return err

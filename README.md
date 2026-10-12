@@ -341,3 +341,80 @@ follows the priority: CLI flags > environment variables > config file.
 
 - [gcp-hcp](https://github.com/openshift-online/gcp-hcp) - Design decisions and architecture
 - [gcp-hcp-infra](https://github.com/openshift-online/gcp-hcp-infra) - Terraform infrastructure and ArgoCD configuration
+
+### Access management
+
+Access-management commands use the public Platform API and the customer GCP
+project selected by `--project`, `GCPHCPCTL_PROJECT`, or configuration as their
+namespace. Selecting a project does not grant authority there. Initial
+`service-admin` bootstrap is handled by activation/Marketplace, not this CLI.
+
+```bash
+# Create a custom permission bundle.
+gcphcpctl --project customer-project role create limited-operations \
+  --permission cluster.get --permission nodepool.get
+
+# Replace the COMPLETE permission set; omitted permissions are removed.
+gcphcpctl --project customer-project role update limited-operations \
+  --permission cluster.get --permission nodepool.get --permission nodepool.list
+
+# Grant one user a platform role or a custom role, using independent bindings.
+gcphcpctl --project customer-project rolebinding create alice-viewer \
+  --subject alice@example.com --platform-role cluster-viewer
+gcphcpctl --project customer-project rolebinding create alice-limited \
+  --subject alice@example.com --role limited-operations
+
+# Audit grants, including full objects in JSON or YAML.
+gcphcpctl --project customer-project rolebinding list --subject alice@example.com
+gcphcpctl --project customer-project rolebinding get alice-viewer -o yaml
+gcphcpctl --project customer-project role list -o json
+gcphcpctl --project customer-project role get limited-operations
+
+# Revoke ONLY this named grant; other bindings remain effective.
+gcphcpctl --project customer-project rolebinding delete alice-viewer --confirm
+```
+
+Create never overwrites an existing name. Role update uses GET followed by PUT,
+retaining resourceVersion and metadata; conflicts are returned without retry.
+Bindings continue to reference the updated Role. Deleting a Role with
+`role delete <name> --confirm` does not delete referencing bindings, which can
+remain unresolved. PlatformRole management and bulk/cross-namespace changes are
+not supported. A namespace service-admin may deliberately grant any role,
+including `cluster-admin` to themselves; the server enforces authorization.
+
+Email normalization preserves local-part case, normalizes Unicode to NFC, and
+lowercases the domain. Subject filtering uses this exact canonical match.
+
+Successful mutations indicate API acceptance, not globally effective access.
+Authorization changes may take a moment to propagate globally. The success note
+is on stdout for text and stderr for JSON/YAML, keeping structured stdout
+parseable. Structured deletion reports kind, name, namespace, and `accepted`,
+not a fabricated deleted object or complete principal revocation.
+
+#### Manual access-management acceptance
+
+Use a disposable customer project with a bootstrapped service-admin, a separate
+user principal, and a second project for namespace-isolation checks. Confirm the
+deployment exposes public `roles`/`rolebindings` routes and enables Cedar before
+running these tests. Never delete bootstrap bindings or revoke the sole admin.
+
+1. Create a custom Role and grants as above; inspect list/get in text, JSON and
+   YAML. Repeat a create name and verify conflict without overwrite.
+2. As the separate viewer, poll a safe read every 5 seconds for up to 2 minutes;
+   verify reads become permitted and writes remain denied. Record acceptance and
+   observed convergence separately; one replica is not proof of global convergence.
+3. Update a custom Role in place and verify omitted permissions eventually stop
+   working and new permissions work, without changing the binding identity.
+4. Create two independent grants for the principal, delete one by name, and
+   verify the other still works. Delete the final relevant grant and observe
+   eventual denial using the same bounded polling window.
+5. Verify a viewer cannot manage access resources and project-A grants do not
+   authorize project-B operations. On disposable resources, verify service-admin
+   can deliberately bind cluster-admin to themselves.
+6. Submit a stale-resourceVersion Role PUT through an integration harness and
+   verify conflict; verify invalid permissions/references produce safe errors.
+7. Clean up only test-owned bindings and Roles with confirmed named deletes.
+
+If convergence is not observed within the bounded window, record the timeout
+rather than claiming success. Live testing requires explicit test identities and
+project selection; unit tests do not use live credentials.
