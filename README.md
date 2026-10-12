@@ -125,8 +125,10 @@ claims, or credential-bearing URLs in those fields. The typed
 `platformapi.HTTPError` retains HTTP status and request metadata for callers
 and tests. Unsupported response content types, token acquisition failures, and
 network failures may instead display `request failed`; a timeout can display
-`request timed out`. `-o json` changes successful result output, not this error
-contract. Failed commands exit non-zero.
+`request timed out`. When the `gcloud` fallback cannot obtain an identity token,
+the CLI instead reports `not authenticated; run gcloud auth login`. `-o json`
+changes successful result output, not this error contract. Failed commands exit
+non-zero.
 
 If a create fails and its outcome is uncertain, inspect the resource before
 retrying. For `cluster create --setup-infra`, inspect the cluster **and** the

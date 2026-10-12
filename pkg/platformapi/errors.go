@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -63,6 +65,8 @@ func newTransportError(err error) *TransportError {
 		return &TransportError{message: "request timed out", sentinel: context.DeadlineExceeded}
 	case errors.Is(err, context.Canceled):
 		return &TransportError{message: "request canceled", sentinel: context.Canceled}
+	case errors.Is(err, auth.ErrGcloudAuthentication):
+		return &TransportError{message: "not authenticated; run gcloud auth login", sentinel: auth.ErrGcloudAuthentication}
 	}
 
 	var timeout interface{ Timeout() bool }

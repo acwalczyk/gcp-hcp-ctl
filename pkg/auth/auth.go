@@ -53,6 +53,12 @@ const (
 var ErrBareWIF = errors.New("WIF credential does not support identity tokens — " +
 	"add service_account_impersonation_url to your credential file")
 
+// ErrGcloudAuthentication identifies a failure to obtain an identity token
+// from the gcloud user-credential fallback. Callers can match it with
+// errors.Is and replace gcloud's underlying output with a safe, actionable
+// diagnostic.
+var ErrGcloudAuthentication = errors.New("gcloud authentication failed")
+
 // tokenFetcher abstracts credential retrieval so tests can inject fakes.
 // FetchIdentityToken returns the token string, its expiry (zero if unknown),
 // and any error.
@@ -214,18 +220,32 @@ func (g goSDKFetcher) FetchAccountEmail(_ context.Context) (string, error) {
 
 // gcloudFetcher retrieves tokens and account info via the gcloud CLI.
 // Used when ADC credentials are absent or of authorized_user type.
-type gcloudFetcher struct{}
+type gcloudFetcher struct {
+	// commandOutput is supplied by tests. Production requests use gcloud
+	// directly through output.
+	commandOutput func(context.Context, ...string) ([]byte, error)
+}
+
+func (g gcloudFetcher) output(ctx context.Context, args ...string) ([]byte, error) {
+	if g.commandOutput != nil {
+		return g.commandOutput(ctx, args...)
+	}
+	return exec.CommandContext(ctx, "gcloud", args...).Output()
+}
+
+func gcloudAuthenticationError(operation string) error {
+	return fmt.Errorf("%w: %s\n\n  Ensure gcloud is installed and authenticated:\n    gcloud auth login", ErrGcloudAuthentication, operation)
+}
 
 func (g gcloudFetcher) FetchIdentityToken(ctx context.Context) (string, time.Time, error) {
-	cmd := exec.CommandContext(ctx, "gcloud", "auth", "print-identity-token")
-	out, err := cmd.Output()
+	out, err := g.output(ctx, "auth", "print-identity-token")
 	if err != nil {
-		var stderr string
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr = strings.TrimSpace(string(exitErr.Stderr))
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", time.Time{}, ctxErr
 		}
-		if stderr != "" {
-			return "", time.Time{}, fmt.Errorf("failed to get identity token: %s", stderr)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", time.Time{}, gcloudAuthenticationError("failed to get identity token")
 		}
 		return "", time.Time{}, fmt.Errorf("failed to get identity token: %w\n\n"+
 			"  Ensure gcloud is installed and authenticated:\n"+
@@ -233,21 +253,27 @@ func (g gcloudFetcher) FetchIdentityToken(ctx context.Context) (string, time.Tim
 	}
 	token := strings.TrimSpace(string(out))
 	if token == "" {
-		return "", time.Time{}, fmt.Errorf("gcloud returned an empty identity token")
+		return "", time.Time{}, fmt.Errorf("%w: gcloud returned an empty identity token", ErrGcloudAuthentication)
 	}
 	// gcloud does not expose the token expiry; defaultTokenLifetime will be used.
 	return token, time.Time{}, nil
 }
 
 func (g gcloudFetcher) FetchAccountEmail(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "gcloud", "config", "get-value", "account")
-	out, err := cmd.Output()
+	out, err := g.output(ctx, "config", "get-value", "account")
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", gcloudAuthenticationError("failed to get account email")
+		}
 		return "", fmt.Errorf("failed to get account email: %w", err)
 	}
 	email := strings.TrimSpace(string(out))
 	if email == "" || email == "(unset)" {
-		return "", fmt.Errorf("no active gcloud account")
+		return "", fmt.Errorf("%w: no active gcloud account", ErrGcloudAuthentication)
 	}
 	return email, nil
 }
