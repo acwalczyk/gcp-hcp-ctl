@@ -13,8 +13,8 @@ var (
 	date    = "unknown"
 )
 
-func init() {
-	rootCmd.AddCommand(&cobra.Command{
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
 		Run: func(_ *cobra.Command, _ []string) {
@@ -24,5 +24,5 @@ func init() {
 			fmt.Printf("  go:      %s\n", runtime.Version())
 			fmt.Printf("  os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 		},
-	})
+	}
 }

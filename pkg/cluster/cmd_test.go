@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
@@ -275,7 +276,7 @@ func executeClusterTestCommand(t *testing.T, client *platformapi.Client, ctx con
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	root.SetContext(ctx)
-	group := NewClusterCmd()
+	group := NewClusterCmd(&config.Config{})
 	group.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		cmd.SetContext(context.WithValue(cmd.Context(), clientKey, client))
 		return nil

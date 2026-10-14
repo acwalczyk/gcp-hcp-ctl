@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/discovery"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/output"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
@@ -18,10 +20,15 @@ import (
 
 type contextKey string
 
-const clientKey contextKey = "platform-api-client"
+const (
+	clientKey     contextKey = "platform-api-client"
+	regionInfoKey contextKey = "discovery-region-info"
+)
 
-// NewClusterCmd returns the "cluster" command group.
-func NewClusterCmd() *cobra.Command {
+// NewClusterCmd returns the "cluster" command group. effective carries the
+// resolved configuration (including the discovered platform API endpoint),
+// populated by the root command's PersistentPreRunE before any subcommand runs.
+func NewClusterCmd(effective *config.Config) *cobra.Command {
 	var clusterCmd *cobra.Command
 	clusterCmd = &cobra.Command{
 		Use:   "cluster",
@@ -33,16 +40,22 @@ func NewClusterCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := validateRequiredFlags(cmd); err != nil {
-				return err
-			}
-			apiEndpoint, _ := cmd.Flags().GetString("api-endpoint")
-			project, _ := cmd.Flags().GetString("project")
-			client, err := newClient(apiEndpoint, project)
+			// Resolve the region's endpoints once for the whole cluster group and
+			// stash them in the context alongside the client.
+			info, err := discovery.NewResolver().Region(cmd.Context(), effective)
 			if err != nil {
 				return err
 			}
-			cmd.SetContext(context.WithValue(cmd.Context(), clientKey, client))
+			if info.PlatformAPIEndpoint == "" {
+				return discovery.EndpointRequiredError(discovery.KindAPI, effective.Environment)
+			}
+			client, err := newClient(info.PlatformAPIEndpoint, effective.Project)
+			if err != nil {
+				return err
+			}
+			ctx := context.WithValue(cmd.Context(), clientKey, client)
+			ctx = context.WithValue(ctx, regionInfoKey, info)
+			cmd.SetContext(ctx)
 			return nil
 		},
 	}
@@ -56,14 +69,6 @@ func NewClusterCmd() *cobra.Command {
 	return clusterCmd
 }
 
-func validateRequiredFlags(cmd *cobra.Command) error {
-	apiEndpoint, _ := cmd.Flags().GetString("api-endpoint")
-	if apiEndpoint == "" {
-		return fmt.Errorf("--api-endpoint is required (or set GCPHCPCTL_API_ENDPOINT or api_endpoint in config)")
-	}
-	return nil
-}
-
 func newClient(apiEndpoint, project string) (*platformapi.Client, error) {
 	return platformapi.NewClient(apiEndpoint, project, auth.NewTokenSource(auth.PlatformAPIAudience))
 }
@@ -74,6 +79,13 @@ func clientFromCmd(cmd *cobra.Command) *platformapi.Client {
 		panic("bug: clientFromCmd called before PersistentPreRunE set the platform API client")
 	}
 	return client
+}
+
+// regionInfoFromCmd returns the region endpoints stashed by the cluster group's
+// PersistentPreRunE. The API client and cluster create use this same result.
+func regionInfoFromCmd(cmd *cobra.Command) discovery.RegionInfo {
+	info, _ := cmd.Context().Value(regionInfoKey).(discovery.RegionInfo)
+	return info
 }
 
 func printCluster(w io.Writer, c *gcpv1.Cluster, format string) error {

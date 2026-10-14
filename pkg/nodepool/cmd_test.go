@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
@@ -450,7 +451,7 @@ func executeNodepoolError(t *testing.T, code int, body string, args ...string) (
 	root := &cobra.Command{Use: "gcphcpctl", SilenceUsage: true}
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	group := NewNodePoolCmd()
+	group := NewNodePoolCmd(&config.Config{})
 	group.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		cmd.SetContext(context.WithValue(cmd.Context(), clientKey, client))
 		return nil
