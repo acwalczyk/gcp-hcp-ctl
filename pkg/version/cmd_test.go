@@ -305,3 +305,29 @@ func TestVersionGetCommandNotFound(t *testing.T) {
 		t.Errorf("unexpected stdout: %q", stdout)
 	}
 }
+
+func TestVersionListCommandAPIError(t *testing.T) {
+	client := versionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/gcp.managed.openshift.io/v1/versions" {
+			t.Errorf("unexpected request path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		writeVersionFixture(t, w, []byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"InternalError"}`))
+	})
+	for _, format := range []string{"text", "json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			err, stdout, _ := executeVersionTestCommand(t, client, "list", "-o", format)
+			if err == nil || !strings.HasPrefix(err.Error(), "listing versions: ") {
+				t.Fatalf("error = %v, want version-list failure", err)
+			}
+			var httpErr *platformapi.HTTPError
+			if !errors.As(err, &httpErr) || httpErr.StatusCode() != http.StatusInternalServerError {
+				t.Fatalf("error = %v, want wrapped HTTP 500", err)
+			}
+			if stdout != "" {
+				t.Errorf("unexpected stdout: %q", stdout)
+			}
+		})
+	}
+}
