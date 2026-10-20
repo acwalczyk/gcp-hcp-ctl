@@ -26,12 +26,31 @@ func newListCmd() *cobra.Command {
 				return fmt.Errorf("listing versions: %w", err)
 			}
 
+			versions = prepareVersionListForOutput(versions)
+			items := versions.Items
+			sort.SliceStable(items, func(i, j int) bool {
+				left, leftErr := utilversion.ParseSemantic(items[i].Name)
+				right, rightErr := utilversion.ParseSemantic(items[j].Name)
+				if leftErr != nil || rightErr != nil {
+					// Put valid versions first; compare unparseable names only
+					// with each other so the ordering remains transitive.
+					if leftErr == nil {
+						return true
+					}
+					if rightErr == nil {
+						return false
+					}
+					return items[i].Name < items[j].Name
+				}
+				return left.LessThan(right)
+			})
+
 			out := cmd.OutOrStdout()
 			switch output.ParseFormat(outputFmt) {
 			case output.FormatJSON:
-				return output.PrintJSON(out, prepareVersionListForOutput(versions))
+				return output.PrintJSON(out, versions)
 			case output.FormatYAML:
-				return output.PrintResourceYAML(out, prepareVersionListForOutput(versions))
+				return output.PrintResourceYAML(out, versions)
 			}
 
 			if len(versions.Items) == 0 {
@@ -50,24 +69,6 @@ func newListCmd() *cobra.Command {
 					defaults[channel.Name] = channel.Spec.InstallDefaultVersion
 				}
 			}
-
-			items := append([]gcpv1.Version(nil), versions.Items...)
-			sort.SliceStable(items, func(i, j int) bool {
-				left, leftErr := utilversion.ParseSemantic(items[i].Name)
-				right, rightErr := utilversion.ParseSemantic(items[j].Name)
-				if leftErr != nil || rightErr != nil {
-					// Put valid versions first; compare unparseable names only
-					// with each other so the ordering remains transitive.
-					if leftErr == nil {
-						return true
-					}
-					if rightErr == nil {
-						return false
-					}
-					return items[i].Name < items[j].Name
-				}
-				return left.LessThan(right)
-			})
 
 			table := output.NewTable(out, "VERSION", "CHANNEL GROUPS")
 			for _, version := range items {

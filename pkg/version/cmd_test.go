@@ -12,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformapi"
+	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 	"github.com/spf13/cobra"
+	"sigs.k8s.io/yaml"
 )
 
 func versionTestClient(t *testing.T, handler http.HandlerFunc) *platformapi.Client {
@@ -190,16 +192,33 @@ func TestVersionListMixedNamesHaveConsistentOrder(t *testing.T) {
 				}
 				writeVersionFixture(t, w, []byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"VersionList","items":[`+strings.Join(items, ",")+`]}`))
 			})
-			err, stdout, _ := executeVersionTestCommand(t, client, "list")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var got []string
-			for _, line := range strings.Split(strings.TrimSpace(stdout), "\n")[1:] {
-				got = append(got, strings.Fields(line)[0])
-			}
-			if want := "4.22.2,4.22.10,4.22.11x"; strings.Join(got, ",") != want {
-				t.Errorf("ordering = %v, want %s", got, want)
+			for _, format := range []string{"text", "json", "yaml"} {
+				t.Run(format, func(t *testing.T) {
+					err, stdout, stderr := executeVersionTestCommand(t, client, "list", "-o", format)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if stderr != "" {
+						t.Errorf("unexpected stderr: %q", stderr)
+					}
+					var got []string
+					if format == "text" {
+						for _, line := range strings.Split(strings.TrimSpace(stdout), "\n")[1:] {
+							got = append(got, strings.Fields(line)[0])
+						}
+					} else {
+						var versions gcpv1.VersionList
+						if err := yaml.Unmarshal([]byte(stdout), &versions); err != nil {
+							t.Fatal(err)
+						}
+						for _, version := range versions.Items {
+							got = append(got, version.Name)
+						}
+					}
+					if want := "4.22.2,4.22.10,4.22.11x"; strings.Join(got, ",") != want {
+						t.Errorf("ordering = %v, want %s", got, want)
+					}
+				})
 			}
 		})
 	}
