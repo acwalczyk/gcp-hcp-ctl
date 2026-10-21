@@ -498,6 +498,30 @@ func TestAllLiveMethodsNormalizeFailure(t *testing.T) {
 		{"nodepool delete", "DELETE", "nodepools", "test-pool", func(_ *testing.T, c *Client) error {
 			return c.NodePools().Delete(context.Background(), c.Namespace(), "test-pool")
 		}},
+		{"upgrade policy create", "POST", "controlplaneupgradepolicies", "test-cluster", func(t *testing.T, c *Client) error {
+			obj, err := c.ControlPlaneUpgradePolicies().Create(context.Background(), c.Namespace(), &gcpv1.ControlPlaneUpgradePolicy{ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"}})
+			if obj != nil {
+				t.Error("failed create returned object")
+			}
+			return err
+		}},
+		{"upgrade policy get", "GET", "controlplaneupgradepolicies", "test-cluster", func(t *testing.T, c *Client) error {
+			obj, err := c.ControlPlaneUpgradePolicies().Get(context.Background(), c.Namespace(), "test-cluster")
+			if obj != nil {
+				t.Error("failed get returned object")
+			}
+			return err
+		}},
+		{"upgrade policy patch", "PATCH", "controlplaneupgradepolicies", "test-cluster", func(t *testing.T, c *Client) error {
+			obj, err := c.ControlPlaneUpgradePolicies().Patch(context.Background(), c.Namespace(), "test-cluster", []byte(`{}`))
+			if obj != nil {
+				t.Error("failed patch returned object")
+			}
+			return err
+		}},
+		{"upgrade policy delete", "DELETE", "controlplaneupgradepolicies", "test-cluster", func(_ *testing.T, c *Client) error {
+			return c.ControlPlaneUpgradePolicies().Delete(context.Background(), c.Namespace(), "test-cluster")
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -669,8 +693,8 @@ func TestLiveResponseShapeMatrix(t *testing.T) {
 	}
 }
 
-func TestBothCreatesUncertainMatrix(t *testing.T) {
-	for _, resource := range []string{"clusters", "nodepools"} {
+func TestCreatesUncertainMatrix(t *testing.T) {
+	for _, resource := range []string{"clusters", "nodepools", "controlplaneupgradepolicies"} {
 		for _, tc := range []struct {
 			name       string
 			code       int
@@ -699,10 +723,13 @@ func TestBothCreatesUncertainMatrix(t *testing.T) {
 					_, _ = w.Write([]byte(tc.body))
 				})
 				var err error
-				if resource == "clusters" {
+				switch resource {
+				case "clusters":
 					_, err = client.Clusters().Create(context.Background(), client.Namespace(), &gcpv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"}})
-				} else {
+				case "nodepools":
 					_, err = client.NodePools().Create(context.Background(), client.Namespace(), &gcpv1.NodePool{ObjectMeta: metav1.ObjectMeta{Name: "test-pool"}})
+				case "controlplaneupgradepolicies":
+					_, err = client.ControlPlaneUpgradePolicies().Create(context.Background(), client.Namespace(), &gcpv1.ControlPlaneUpgradePolicy{ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"}})
 				}
 				if err == nil || err.Error() != tc.want || IsUncertainOutcome(err) != tc.uncertain {
 					t.Fatalf("error = %v, uncertain = %v", err, IsUncertainOutcome(err))
