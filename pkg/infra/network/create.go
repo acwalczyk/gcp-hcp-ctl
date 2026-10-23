@@ -60,10 +60,18 @@ func NewCreateCommand() *cobra.Command {
 		Short: "Create GCP network infrastructure for a HyperShift cluster",
 		Long: `Create network infrastructure including:
   - VPC network (custom subnet mode)
-  - Firewall rule for kubelet access (TCP 10250)
+  - Worker firewall rule for worker-to-worker and kubelet traffic
   - Subnet with Private Google Access
   - Cloud Router
   - Cloud NAT
+
+The worker firewall rule (<infra-id>-internal-cluster) matches the
+control-plane-operator's desired state exactly, including its ownership marker.
+
+The rule is created unless the cluster runs OpenShift 5.1.0 or later, where the
+control-plane-operator owns it. Pass --version to apply that comparison; when
+it is omitted the rule is created, which is safe because the operator adopts a
+marked rule it finds. Use --no-firewall-rule to suppress creation entirely.
 
 All operations are idempotent and safe to run multiple times.`,
 		Args:         cobra.ExactArgs(1),

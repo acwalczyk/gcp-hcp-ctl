@@ -159,16 +159,28 @@ gcphcpctl iam destroy <infra-id> --yes    # skip confirmation prompt
 All create operations are idempotent (safe to run multiple times). Destroy
 operations tolerate not-found errors gracefully.
 
+The `ctrlplane-op` service account is granted `roles/compute.securityAdmin` so
+the control-plane-operator can manage the worker firewall rule. Re-run
+`gcphcpctl iam create <infra-id>` on clusters created before this grant existed
+to apply it.
+
 ### Network Infrastructure for Hosted Clusters (`network`)
 
 Create and destroy GCP network infrastructure including VPC networks, subnets,
-Cloud Routers, Cloud NAT, and firewall rules.
+Cloud Routers, Cloud NAT, and the worker firewall rule.
 
 ```bash
 # Create network infrastructure for a cluster
 gcphcpctl network create <infra-id>
 gcphcpctl network create <infra-id> --vpc-cidr 10.1.0.0/24
 gcphcpctl network create <infra-id> --output-file network-output.json
+
+# Create for a cluster on a pre-5.1 payload (CLI owns the firewall rule)
+gcphcpctl network create <infra-id> --version 5.0.0-ec.6
+
+# Create for a 5.1+ cluster and let the control-plane-operator own the rule
+gcphcpctl network create <infra-id> --version 5.1.0
+gcphcpctl network create <infra-id> --no-firewall-rule
 
 # Destroy network infrastructure for a cluster
 gcphcpctl network destroy <infra-id>
@@ -178,6 +190,57 @@ gcphcpctl network destroy <infra-id> --yes    # skip confirmation prompt
 All create operations are idempotent (safe to run multiple times). Destroy
 operations delete resources in reverse dependency order and tolerate not-found
 errors gracefully.
+
+#### Worker firewall rule ownership
+
+The control-plane-operator (CPO) owns the worker firewall rule
+`<infra-id>-internal-cluster` from OpenShift 5.1.0 onwards (GCP-1221). Older
+payloads have no CPO firewall code, so the CLI creates the rule for them. The
+rule matches CPO's desired state exactly, including the ownership marker in its
+description, so CPO adopts it instead of reporting
+`GCPFirewallOwnershipConflict`:
+
+```json
+{"hypershift.openshift.io/managed-by":"control-plane-operator","hypershift.openshift.io/infra-id":"<infra-id>"}
+```
+
+The decision follows the requested cluster version:
+
+| Requested version | Behaviour |
+| --- | --- |
+| unset (`network create` only) | Create the rule. Safe: CPO adopts a marked rule. |
+| `< 5.1.0`, including `5.0.0-ec.6` and `5.1.0-ec.1` | Create the rule. |
+| `>= 5.1.0` | Create nothing; CPO is sole owner. |
+
+`cluster create --setup-infra` passes its own `--version` into network setup, so
+it follows the same table. Prereleases sort below their release: `5.1.0-ec.1`
+counts as pre-5.1 and the CLI creates the rule, which CPO adopts once the
+cluster upgrades to a payload that carries the change.
+
+`--no-firewall-rule` suppresses creation on `network create` regardless of the
+version, for operators who know the cluster runs a 5.1+ payload.
+
+The rule's ports are TCP `10250` and `9000-9999` plus the service node port
+range, and UDP `9000-9999` plus the node port range and, for OVNKubernetes, the
+Geneve port `6081`. The node port range defaults to `30000-32767` and can be
+overridden with `--node-port-range` when the cluster uses a custom
+`serviceNodePortRange`; the network type defaults to `OVNKubernetes` and can be
+set with `--network-type`.
+
+#### Prerequisites and teardown
+
+* CPO needs `roles/compute.securityAdmin` to manage the rule. `gcphcpctl iam
+  create` grants it, but **existing** clusters created before this role was
+  added must re-run `gcphcpctl iam create <infra-id>`; otherwise the
+  `GCPFirewallRulesReady` condition reports a permission failure indefinitely.
+* Delete the HostedCluster before `network destroy`. Destroy removes both
+  `<infra-id>-internal-cluster` and the legacy `<infra-id>-allow-kubelet` rule
+  before the VPC, because GCP refuses to delete a network that a firewall rule
+  still references. Removing the rule while CPO is still reconciling can leave
+  the HostedCluster degraded.
+
+The create output field `firewallRuleName` holds the created rule's name. It is
+empty when no rule was created.
 
 ### Operational Debugging (`ops`)
 

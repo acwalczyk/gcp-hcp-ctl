@@ -29,8 +29,14 @@ func NewDestroyCommand() *cobra.Command {
   1. Cloud NAT (removed from router)
   2. Cloud Router
   3. Subnet
-  4. Firewall rule
+  4. Worker firewall rules: <infra-id>-internal-cluster and the legacy
+     <infra-id>-allow-kubelet
   5. VPC network
+
+Both firewall rules are removed before the VPC network, which GCP refuses to
+delete while a rule still references it. Delete the HostedCluster first so the
+control-plane-operator has released the managed rule before the network is torn
+down.
 
 All delete operations tolerate not-found errors (idempotent).`,
 		Args:         cobra.ExactArgs(1),
@@ -129,7 +135,7 @@ func confirmDestroy(infraID, projectID, region string) (bool, error) {
 	fmt.Fprintf(os.Stderr, "  - Cloud NAT\n")
 	fmt.Fprintf(os.Stderr, "  - Cloud Router\n")
 	fmt.Fprintf(os.Stderr, "  - Subnet\n")
-	fmt.Fprintf(os.Stderr, "  - Firewall rule\n")
+	fmt.Fprintf(os.Stderr, "  - Firewall rules (%s-internal-cluster, legacy %s-allow-kubelet)\n", infraID, infraID)
 	fmt.Fprintf(os.Stderr, "  - VPC network\n")
 	fmt.Fprintf(os.Stderr, "\nAre you sure? [y/N]: ")
 
