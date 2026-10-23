@@ -330,3 +330,40 @@ func TestNewCreateCommand(t *testing.T) {
 		}
 	})
 }
+
+// TestCreateOutputRetainsFirewallRuleName asserts the firewallRuleName field is
+// always serialized: downstream consumers parse this output, so the field must
+// not disappear when no rule was created.
+func TestCreateOutputRetainsFirewallRuleName(t *testing.T) {
+	tests := []struct {
+		name       string
+		ruleName   string
+		serialized string
+	}{
+		{
+			name:       "When a firewall rule was created it should serialize its name",
+			ruleName:   "test-infra-internal-cluster",
+			serialized: `"firewallRuleName":"test-infra-internal-cluster"`,
+		},
+		{
+			name:       "When no firewall rule was created it should still serialize the empty field",
+			ruleName:   "",
+			serialized: `"firewallRuleName":""`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(&CreateOutput{
+				InfraID:          "test-infra",
+				FirewallRuleName: tt.ruleName,
+			})
+			if err != nil {
+				t.Fatalf("failed to marshal output: %v", err)
+			}
+			if !strings.Contains(string(data), tt.serialized) {
+				t.Errorf("expected output %s to contain %s", data, tt.serialized)
+			}
+		})
+	}
+}

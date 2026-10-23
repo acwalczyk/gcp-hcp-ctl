@@ -52,6 +52,16 @@ func TestShouldCreateFirewallRule(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "When version is a prerelease of a later patch it should not create the rule",
+			version:  "5.1.1-ec.1",
+			expected: false,
+		},
+		{
+			name:     "When version carries build metadata it should compare equal to the release",
+			version:  "5.1.0+build.1",
+			expected: false,
+		},
+		{
 			name:           "When the opt-out flag is set it should not create the rule for a pre-5.1 version",
 			version:        "5.0.0-ec.6",
 			noFirewallRule: true,
@@ -208,6 +218,33 @@ func TestDesiredFirewall(t *testing.T) {
 	}
 	if !slices.Equal(firewall.ForceSendFields, expectedForceSend) {
 		t.Errorf("expected ForceSendFields %v, got %v", expectedForceSend, firewall.ForceSendFields)
+	}
+}
+
+func TestDesiredFirewallCustomNodePortRange(t *testing.T) {
+	tests := []struct {
+		name              string
+		networkType       string
+		expectedGeneveUDP bool
+	}{
+		{name: "When the network type is OVNKubernetes it should keep the Geneve port", networkType: NetworkTypeOVNKubernetes, expectedGeneveUDP: true},
+		{name: "When the network type is OpenShiftSDN it should omit the Geneve port", networkType: NetworkTypeOpenShiftSDN, expectedGeneveUDP: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			firewall := desiredFirewall("test-infra", "networks/test-infra-network", tt.networkType, "30000-31000")
+
+			if !slices.Contains(firewall.Allowed[0].Ports, "30000-31000") {
+				t.Errorf("expected tcp ports %v to contain the custom node port range", firewall.Allowed[0].Ports)
+			}
+			if !slices.Contains(firewall.Allowed[1].Ports, "30000-31000") {
+				t.Errorf("expected udp ports %v to contain the custom node port range", firewall.Allowed[1].Ports)
+			}
+			if got := slices.Contains(firewall.Allowed[1].Ports, geneveOverlayPort); got != tt.expectedGeneveUDP {
+				t.Errorf("expected udp ports %v to contain %q: %v, got %v", firewall.Allowed[1].Ports, geneveOverlayPort, tt.expectedGeneveUDP, got)
+			}
+		})
 	}
 }
 
