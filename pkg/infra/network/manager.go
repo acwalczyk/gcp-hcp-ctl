@@ -74,33 +74,33 @@ func (m *Manager) CreateNetwork(ctx context.Context) (*compute.Network, error) {
 	return m.client.GetNetwork(ctx, networkName)
 }
 
-func (m *Manager) CreateFirewallRule(ctx context.Context, networkSelfLink string) (*compute.Firewall, error) {
-	firewallName := m.formatLegacyFirewallName()
+// CreateFirewallRule creates the worker firewall rule in CPO's desired state,
+// including the ownership marker in its description, so the
+// control-plane-operator adopts the rule instead of reporting a conflict
+// (GCP-1221). networkType selects the Geneve overlay port; nodePortRange is the
+// cluster's service node port range.
+func (m *Manager) CreateFirewallRule(ctx context.Context, networkSelfLink, networkType, nodePortRange string) (*compute.Firewall, error) {
+	firewallName := m.formatFirewallName()
 	m.logger.Info("Creating firewall rule", "name", firewallName)
 
-	firewall := &compute.Firewall{
-		Name:        firewallName,
-		Network:     networkSelfLink,
-		Description: fmt.Sprintf("Allow kubelet API access for HyperShift cluster %s", m.infraID),
-		Allowed: []*compute.FirewallAllowed{
-			{
-				IPProtocol: "tcp",
-				Ports:      []string{"10250"},
-			},
-		},
-		Direction: "INGRESS",
-		// Allow traffic from the 10.0.0.0/8 range which covers:
-		// - Worker node subnet (e.g., 10.0.0.0/24)
-		// - Pod CIDR (e.g., 10.132.0.0/14)
-		// This enables kube-apiserver to reach kubelets via konnectivity and
-		// allows pods to scrape kubelet metrics.
-		SourceRanges: []string{"10.0.0.0/8"},
+	firewall := desiredFirewall(m.infraID, networkSelfLink, networkType, nodePortRange)
+	marker, err := ownershipMarker(m.infraID)
+	if err != nil {
+		return nil, err
 	}
+	firewall.Description = marker
 
 	if err := m.client.InsertFirewall(ctx, firewall); err != nil {
 		if isAlreadyExistsError(err) {
 			m.logger.Info("Firewall rule already exists", "name", firewallName)
-			return m.client.GetFirewall(ctx, firewallName)
+			existing, getErr := m.client.GetFirewall(ctx, firewallName)
+			if getErr != nil {
+				return nil, fmt.Errorf("failed to get existing firewall rule: %w", getErr)
+			}
+			if !hasOwnershipMarker(existing, m.infraID) {
+				m.logger.Info("WARNING: existing firewall rule is missing the control-plane-operator ownership marker; CPO will not adopt it", "name", firewallName)
+			}
+			return existing, nil
 		}
 		return nil, fmt.Errorf("failed to create firewall rule: %w", err)
 	}

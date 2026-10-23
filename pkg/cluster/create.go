@@ -329,6 +329,9 @@ func buildPayloadWithInfraSetup(ctx context.Context, w io.Writer, opts buildPayl
 		ProjectID: opts.projectID,
 		Region:    opts.region,
 		InfraID:   opts.infraID,
+		// The requested version decides firewall ownership: below 5.1.0 this CLI
+		// creates the CPO-compatible worker rule, from 5.1.0 CPO creates it.
+		Version: opts.version,
 	}
 	networkOutput, err := networkOpts.CreateNetwork(ctx, logger)
 	if err != nil {

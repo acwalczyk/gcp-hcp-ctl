@@ -20,6 +20,18 @@ type CreateOptions struct {
 	InfraID    string
 	VPCCidr    string
 	OutputFile string
+
+	// Version is the requested cluster version. Below 5.1.0 the CLI creates the
+	// worker firewall rule; from 5.1.0 the control-plane-operator owns it and no
+	// rule is created. Empty means unknown, which creates the rule.
+	Version string
+	// NetworkType selects the firewall ports; OVNKubernetes adds the Geneve
+	// overlay port.
+	NetworkType string
+	// NodePortRange is the cluster's service node port range.
+	NodePortRange string
+	// NoFirewallRule suppresses firewall rule creation regardless of version.
+	NoFirewallRule bool
 }
 
 type CreateOutput struct {
@@ -38,7 +50,9 @@ type CreateOutput struct {
 
 func NewCreateCommand() *cobra.Command {
 	opts := &CreateOptions{
-		VPCCidr: DefaultSubnetCIDR,
+		VPCCidr:       DefaultSubnetCIDR,
+		NetworkType:   DefaultNetworkType,
+		NodePortRange: DefaultNodePortRange,
 	}
 
 	cmd := &cobra.Command{
@@ -75,6 +89,10 @@ All operations are idempotent and safe to run multiple times.`,
 
 	cmd.Flags().StringVar(&opts.VPCCidr, "vpc-cidr", opts.VPCCidr, "CIDR block for the subnet")
 	cmd.Flags().StringVar(&opts.OutputFile, "output-file", "", "Path to output JSON file with resource details (default: stdout)")
+	cmd.Flags().StringVar(&opts.Version, "version", "", "Target OCP version; below 5.1.0 the worker firewall rule is created, from 5.1.0 the control-plane-operator creates it (default: create the rule)")
+	cmd.Flags().StringVar(&opts.NetworkType, "network-type", opts.NetworkType, "Cluster network type: OVNKubernetes or OpenShiftSDN")
+	cmd.Flags().StringVar(&opts.NodePortRange, "node-port-range", opts.NodePortRange, "Service node port range for the worker firewall rule")
+	cmd.Flags().BoolVar(&opts.NoFirewallRule, "no-firewall-rule", false, "Do not create the worker firewall rule; the control-plane-operator owns it")
 
 	return cmd
 }
@@ -94,7 +112,34 @@ func (o *CreateOptions) ValidateInputs() error {
 			return fmt.Errorf("vpc-cidr must be a valid CIDR: %w", err)
 		}
 	}
+	if !isValidVersion(o.Version) {
+		return fmt.Errorf("version must be a semantic version such as 5.1.0 or 5.0.0-ec.6, got %q", o.Version)
+	}
+	if o.NetworkType != "" {
+		if err := validateNetworkType(o.NetworkType); err != nil {
+			return err
+		}
+	}
+	if o.NodePortRange != "" {
+		if err := validateNodePortRange(o.NodePortRange); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// applyDefaults fills in values omitted by programmatic callers (for example
+// cluster create --setup-infra).
+func (o *CreateOptions) applyDefaults() {
+	if o.VPCCidr == "" {
+		o.VPCCidr = DefaultSubnetCIDR
+	}
+	if o.NetworkType == "" {
+		o.NetworkType = DefaultNetworkType
+	}
+	if o.NodePortRange == "" {
+		o.NodePortRange = DefaultNodePortRange
+	}
 }
 
 func (o *CreateOptions) Run(ctx context.Context, logger logr.Logger) error {
@@ -115,9 +160,7 @@ func (o *CreateOptions) CreateNetwork(ctx context.Context, logger logr.Logger) (
 	logger.Info("Creating GCP network infrastructure",
 		"projectID", o.ProjectID, "region", o.Region, "infraID", o.InfraID)
 
-	if o.VPCCidr == "" {
-		o.VPCCidr = DefaultSubnetCIDR
-	}
+	o.applyDefaults()
 
 	mgr, err := NewManager(ctx, o.ProjectID, o.InfraID, o.Region, logger)
 	if err != nil {
@@ -137,11 +180,16 @@ func (o *CreateOptions) CreateNetwork(ctx context.Context, logger logr.Logger) (
 	result.NetworkName = network.Name
 	result.NetworkSelfLink = network.SelfLink
 
-	firewall, err := mgr.CreateFirewallRule(ctx, network.SelfLink)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create firewall rule: %w", err)
+	if shouldCreateFirewallRule(o.Version, o.NoFirewallRule) {
+		firewall, err := mgr.CreateFirewallRule(ctx, network.SelfLink, o.NetworkType, o.NodePortRange)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create firewall rule: %w", err)
+		}
+		result.FirewallRuleName = firewall.Name
+	} else {
+		logger.Info("Skipping worker firewall rule; it is owned by the control-plane-operator",
+			"name", mgr.formatFirewallName(), "version", o.Version)
 	}
-	result.FirewallRuleName = firewall.Name
 
 	subnet, err := mgr.CreateSubnet(ctx, network.SelfLink, o.VPCCidr)
 	if err != nil {
