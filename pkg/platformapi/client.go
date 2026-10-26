@@ -146,6 +146,11 @@ func (c *Client) ControlPlaneUpgradePolicies() ControlPlaneUpgradePolicyInterfac
 	return &controlPlaneUpgradePolicyClient{restClient: c.restClient}
 }
 
+// Channels returns a ChannelInterface for performing channel operations.
+func (c *Client) Channels() ChannelInterface {
+	return &channelClient{restClient: c.restClient}
+}
+
 // ClusterInterface defines operations on Cluster resources.
 type ClusterInterface interface {
 	Create(ctx context.Context, namespace string, cluster *gcpv1.Cluster) (*gcpv1.Cluster, error)
@@ -211,6 +216,7 @@ func (c *clusterClient) Delete(ctx context.Context, namespace, name string) erro
 // VersionInterface defines operations on cluster-scoped Version resources.
 type VersionInterface interface {
 	Get(ctx context.Context, name string) (*gcpv1.Version, error)
+	List(ctx context.Context) (*gcpv1.VersionList, error)
 }
 
 type versionClient struct {
@@ -224,6 +230,37 @@ func (v *versionClient) Get(ctx context.Context, name string) (*gcpv1.Version, e
 		Name(name).
 		Do(ctx)
 	if err := decodeResult(response, result, http.MethodGet, "versions", name, false); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (v *versionClient) List(ctx context.Context) (*gcpv1.VersionList, error) {
+	result := &gcpv1.VersionList{}
+	response := v.restClient.Get().
+		Resource("versions").
+		Do(ctx)
+	if err := decodeResult(response, result, http.MethodGet, "versions", "", false); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ChannelInterface defines operations on cluster-scoped Channel resources.
+type ChannelInterface interface {
+	List(ctx context.Context) (*gcpv1.ChannelList, error)
+}
+
+type channelClient struct {
+	restClient rest.Interface
+}
+
+func (c *channelClient) List(ctx context.Context) (*gcpv1.ChannelList, error) {
+	result := &gcpv1.ChannelList{}
+	response := c.restClient.Get().
+		Resource("channels").
+		Do(ctx)
+	if err := decodeResult(response, result, http.MethodGet, "channels", "", false); err != nil {
 		return nil, err
 	}
 	return result, nil

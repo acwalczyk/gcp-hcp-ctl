@@ -31,6 +31,10 @@ func (f *fakeVersionClient) Get(context.Context, string) (*gcpv1.Version, error)
 	return f.version, f.err
 }
 
+func (f *fakeVersionClient) List(context.Context) (*gcpv1.VersionList, error) {
+	return nil, nil
+}
+
 func TestValidateVersion(t *testing.T) {
 	t.Run("When version belongs to the channel group it should succeed", func(t *testing.T) {
 		versions := &fakeVersionClient{version: &gcpv1.Version{
