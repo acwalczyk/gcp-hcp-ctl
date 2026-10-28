@@ -307,8 +307,8 @@ func buildPayloadFromConfigs(iamConfigFile, networkConfigFile string, opts build
 }
 
 // networkCreateOptions builds the network setup options for --setup-infra. The
-// requested cluster version decides who owns the worker firewall rule below
-// 5.1.0 (GCP-1349).
+// requested cluster version decides who owns the worker firewall rule from
+// 5.0.0 GA onwards (GCP-1349).
 func networkCreateOptions(opts buildPayloadOptions) *network.CreateOptions {
 	return &network.CreateOptions{
 		ProjectID: opts.projectID,

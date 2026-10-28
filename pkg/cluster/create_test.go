@@ -450,8 +450,8 @@ func TestNetworkCreateOptions(t *testing.T) {
 		name    string
 		version string
 	}{
-		{name: "When the version is a pre-5.1 payload it should be passed through", version: "5.0.0-ec.6"},
-		{name: "When the version is 5.1.0 or later it should be passed through", version: "5.2.0"},
+		{name: "When the version is a pre-GA candidate it should be passed through", version: "5.0.0-ec.6"},
+		{name: "When the version is a 5.0.0+ GA release it should be passed through", version: "5.2.0"},
 		{name: "When the version is empty it should be passed through unchanged", version: ""},
 	}
 

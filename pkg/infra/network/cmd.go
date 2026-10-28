@@ -16,9 +16,10 @@ func NewNetworkCmd() *cobra.Command {
 VPC networks, subnets, Cloud Routers, Cloud NAT, and the worker firewall rule.
 
 The worker firewall rule (<infra-id>-internal-cluster) is owned by the
-control-plane-operator from OpenShift 5.1.0 onwards. For older versions, whose
-payload has no control-plane-operator firewall code, the CLI creates the rule
-in the operator's exact desired form - including its ownership marker - so the
+control-plane-operator from OpenShift 5.0.0 GA onwards. Older GA releases (4.x)
+and pre-GA candidates (for example 5.0.0-ec.6) may have no
+control-plane-operator firewall code, so the CLI creates the rule for them in
+the operator's exact desired form - including its ownership marker - so the
 operator adopts it when the cluster upgrades. Pass --version to "network create"
 to select this behaviour; without it the rule is created.
 

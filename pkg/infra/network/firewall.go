@@ -37,11 +37,15 @@ const (
 	NetworkTypeOVNKubernetes = "OVNKubernetes"
 	NetworkTypeOpenShiftSDN  = "OpenShiftSDN"
 
-	// cpoFirewallMinimumVersion is the first OCP release whose
-	// control-plane-operator owns the worker firewall rule (GCP-1221,
-	// openshift/hypershift#9640). Payloads before it have no CPO firewall code,
-	// so this CLI must create the rule for them.
-	cpoFirewallMinimumVersion = "v5.1.0"
+	// cpoFirewallMinimumVersion is the first OCP GA release whose
+	// control-plane-operator owns the worker firewall rule. GCP-1221 shipped in
+	// openshift/hypershift#9640 and was backported to release-5.0 in
+	// openshift/hypershift#10096, so every 5.0.0 GA payload and later carries it.
+	//
+	// Pre-GA candidates cannot be ordered against that backport by version
+	// number: for example 5.0.0-ec.6 was cut before it. shouldCreateFirewallRule
+	// therefore keeps creating the rule for every prerelease.
+	cpoFirewallMinimumVersion = "v5.0.0"
 )
 
 // normalizeVersion prefixes a bare version with "v" so golang.org/x/mod/semver,
@@ -62,22 +66,22 @@ func isValidVersion(version string) bool {
 // shouldCreateFirewallRule decides whether this CLI creates the worker firewall
 // rule for the requested cluster version.
 //
-// CPO owns the rule from cpoFirewallMinimumVersion onwards. Below it the CLI
-// must create the rule, because that payload has no CPO firewall code. When the
-// version is unknown the CLI creates the rule: CPO adopts a marked rule it
-// finds, so creating it is safe in every case, whereas not creating it would
-// leave the cluster without worker traffic rules.
-//
-// Prereleases compare below their release, so 5.0.0-ec.6 and 5.1.0-ec.1 both
-// fall below 5.1.0. That is intended: those payloads predate GCP-1221.
+// CPO owns the rule from cpoFirewallMinimumVersion (5.0.0 GA) onwards. Earlier
+// GA releases (4.x) and every prerelease fall back to CLI creation: a
+// prerelease may have been cut before the CPO firewall code landed, and its
+// version number cannot distinguish the two cases. Creating a rule CPO also
+// wants is harmless, because CPO adopts a marked rule it finds, whereas not
+// creating it where CPO has no firewall code leaves the cluster without worker
+// traffic rules. An unknown version is treated the same way.
 func shouldCreateFirewallRule(version string, noFirewallRule bool) bool {
 	if noFirewallRule {
 		return false
 	}
-	if version == "" {
+	v := normalizeVersion(version)
+	if !semver.IsValid(v) || semver.Prerelease(v) != "" {
 		return true
 	}
-	return semver.Compare(normalizeVersion(version), cpoFirewallMinimumVersion) < 0
+	return semver.Compare(v, cpoFirewallMinimumVersion) < 0
 }
 
 // validateNodePortRange checks a "min-max" service node port range.

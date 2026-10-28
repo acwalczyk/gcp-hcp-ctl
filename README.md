@@ -175,11 +175,11 @@ gcphcpctl network create <infra-id>
 gcphcpctl network create <infra-id> --vpc-cidr 10.1.0.0/24
 gcphcpctl network create <infra-id> --output-file network-output.json
 
-# Create for a cluster on a pre-5.1 payload (CLI owns the firewall rule)
+# Create for a cluster on a payload without CPO firewall code (CLI owns the rule)
 gcphcpctl network create <infra-id> --version 5.0.0-ec.6
 
-# Create for a 5.1+ cluster and let the control-plane-operator own the rule
-gcphcpctl network create <infra-id> --version 5.1.0
+# Create for a 5.0.0+ cluster and let the control-plane-operator own the rule
+gcphcpctl network create <infra-id> --version 5.0.0
 gcphcpctl network create <infra-id> --no-firewall-rule
 
 # Destroy network infrastructure for a cluster
@@ -194,10 +194,13 @@ errors gracefully.
 #### Worker firewall rule ownership
 
 The control-plane-operator (CPO) owns the worker firewall rule
-`<infra-id>-internal-cluster` from OpenShift 5.1.0 onwards (GCP-1221). Older
-payloads have no CPO firewall code, so the CLI creates the rule for them. The
-rule matches CPO's desired state exactly, including the ownership marker in its
-description, so CPO adopts it instead of reporting
+`<infra-id>-internal-cluster` from OpenShift 5.0.0 GA onwards. GCP-1221 shipped
+in [openshift/hypershift#9640](https://github.com/openshift/hypershift/pull/9640)
+and was backported to release-5.0 in
+[openshift/hypershift#10096](https://github.com/openshift/hypershift/pull/10096),
+so 4.x payloads and pre-GA candidates may have no CPO firewall code. For those
+the CLI creates the rule. It matches CPO's desired state exactly, including the
+ownership marker in its description, so CPO adopts it instead of reporting
 `GCPFirewallOwnershipConflict`:
 
 ```json
@@ -209,16 +212,17 @@ The decision follows the requested cluster version:
 | Requested version | Behaviour |
 | --- | --- |
 | unset (`network create` only) | Create the rule. Safe: CPO adopts a marked rule. |
-| `< 5.1.0`, including `5.0.0-ec.6` and `5.1.0-ec.1` | Create the rule. |
-| `>= 5.1.0` | Create nothing; CPO is sole owner. |
+| pre-GA candidate, e.g. `5.0.0-ec.6`, `5.0.0-ec.7`, `5.1.0-ec.1` | Create the rule. A candidate's version number cannot prove the CPO firewall code is present; when it is, CPO adopts the marked rule. |
+| `< 5.0.0` GA release (`4.x`) | Create the rule. These payloads have no CPO firewall code. |
+| `>= 5.0.0` GA release | Create nothing; CPO is sole owner. |
 
 `cluster create --setup-infra` passes its own `--version` into network setup, so
-it follows the same table. Prereleases sort below their release: `5.1.0-ec.1`
-counts as pre-5.1 and the CLI creates the rule, which CPO adopts once the
-cluster upgrades to a payload that carries the change.
+it follows the same table. Because every prerelease creates the rule, a cluster
+built from a candidate payload always has one; use a `5.0.0`+ GA payload to
+exercise CPO ownership at setup time.
 
 `--no-firewall-rule` suppresses creation on `network create` regardless of the
-version, for operators who know the cluster runs a 5.1+ payload.
+version, for operators who know the cluster runs a 5.0.0+ GA payload.
 
 The rule's ports are TCP `10250` and `9000-9999` plus the service node port
 range, and UDP `9000-9999` plus the node port range and, for OVNKubernetes, the
@@ -233,6 +237,8 @@ set with `--network-type`.
   create` grants it, but **existing** clusters created before this role was
   added must re-run `gcphcpctl iam create <infra-id>`; otherwise the
   `GCPFirewallRulesReady` condition reports a permission failure indefinitely.
+  This includes existing 5.0 clusters once they upgrade to a payload that
+  carries the backport.
 * Delete the HostedCluster before `network destroy`. Destroy removes both
   `<infra-id>-internal-cluster` and the legacy `<infra-id>-allow-kubelet` rule
   before the VPC, because GCP refuses to delete a network that a firewall rule

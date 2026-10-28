@@ -21,9 +21,10 @@ type CreateOptions struct {
 	VPCCidr    string
 	OutputFile string
 
-	// Version is the requested cluster version. Below 5.1.0 the CLI creates the
-	// worker firewall rule; from 5.1.0 the control-plane-operator owns it and no
-	// rule is created. Empty means unknown, which creates the rule.
+	// Version is the requested cluster version. From 5.0.0 GA the
+	// control-plane-operator owns the worker firewall rule and no rule is
+	// created; older GA releases and any pre-GA candidate fall back to CLI
+	// creation. Empty means unknown, which creates the rule.
 	Version string
 	// NetworkType selects the firewall ports; OVNKubernetes adds the Geneve
 	// overlay port.
@@ -68,10 +69,12 @@ func NewCreateCommand() *cobra.Command {
 The worker firewall rule (<infra-id>-internal-cluster) matches the
 control-plane-operator's desired state exactly, including its ownership marker.
 
-The rule is created unless the cluster runs OpenShift 5.1.0 or later, where the
-control-plane-operator owns it. Pass --version to apply that comparison; when
-it is omitted the rule is created, which is safe because the operator adopts a
-marked rule it finds. Use --no-firewall-rule to suppress creation entirely.
+The rule is created unless the cluster runs OpenShift 5.0.0 GA or later, where
+the control-plane-operator owns it. Pre-GA candidates (for example 5.0.0-ec.6)
+always get the rule: their version number cannot prove whether the operator's
+firewall code is present. Pass --version to apply that comparison; when it is
+omitted the rule is created, which is safe because the operator adopts a marked
+rule it finds. Use --no-firewall-rule to suppress creation entirely.
 
 All operations are idempotent and safe to run multiple times.`,
 		Args:         cobra.ExactArgs(1),
@@ -97,7 +100,7 @@ All operations are idempotent and safe to run multiple times.`,
 
 	cmd.Flags().StringVar(&opts.VPCCidr, "vpc-cidr", opts.VPCCidr, "CIDR block for the subnet")
 	cmd.Flags().StringVar(&opts.OutputFile, "output-file", "", "Path to output JSON file with resource details (default: stdout)")
-	cmd.Flags().StringVar(&opts.Version, "version", "", "Target OCP version; below 5.1.0 the worker firewall rule is created, from 5.1.0 the control-plane-operator creates it (default: create the rule)")
+	cmd.Flags().StringVar(&opts.Version, "version", "", "Target OCP version; pre-5.0.0 GA and prereleases create the worker firewall rule, 5.0.0 GA and later let the control-plane-operator create it (default: create the rule)")
 	cmd.Flags().StringVar(&opts.NetworkType, "network-type", opts.NetworkType, "Cluster network type: OVNKubernetes or OpenShiftSDN")
 	cmd.Flags().StringVar(&opts.NodePortRange, "node-port-range", opts.NodePortRange, "Service node port range for the worker firewall rule")
 	cmd.Flags().BoolVar(&opts.NoFirewallRule, "no-firewall-rule", false, "Do not create the worker firewall rule; the control-plane-operator owns it")
@@ -121,7 +124,7 @@ func (o *CreateOptions) ValidateInputs() error {
 		}
 	}
 	if !isValidVersion(o.Version) {
-		return fmt.Errorf("version must be a semantic version such as 5.1.0 or 5.0.0-ec.6, got %q", o.Version)
+		return fmt.Errorf("version must be a semantic version such as 5.0.0 or 5.0.0-ec.6, got %q", o.Version)
 	}
 	if o.NetworkType != "" {
 		if err := validateNetworkType(o.NetworkType); err != nil {

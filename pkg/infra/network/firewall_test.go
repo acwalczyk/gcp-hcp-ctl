@@ -17,13 +17,38 @@ func TestShouldCreateFirewallRule(t *testing.T) {
 		expected       bool
 	}{
 		{
-			name:     "When version is 5.0.0-ec.6 it should create the rule because that payload predates GCP-1221",
+			name:     "When version is 5.0.0-ec.6 it should create the rule because that payload predates the CPO backport",
 			version:  "5.0.0-ec.6",
 			expected: true,
 		},
 		{
-			name:     "When version is a 5.1 prerelease it should create the rule because prereleases sort below 5.1.0",
+			name:     "When version is a 5.0 candidate after the backport it should still create the rule because the version cannot prove the CPO code is present",
+			version:  "5.0.0-ec.7",
+			expected: true,
+		},
+		{
+			name:     "When version is a 5.1 prerelease it should create the rule because pre-GA candidates are never assumed to carry the CPO code",
 			version:  "5.1.0-ec.1",
+			expected: true,
+		},
+		{
+			name:     "When version is 5.0.0 GA it should not create the rule because CPO owns it",
+			version:  "5.0.0",
+			expected: false,
+		},
+		{
+			name:     "When version is a 5.0 GA release with a v prefix it should not create the rule",
+			version:  "v5.0.0",
+			expected: false,
+		},
+		{
+			name:     "When version is a later 5.0 GA patch it should not create the rule",
+			version:  "5.0.1",
+			expected: false,
+		},
+		{
+			name:     "When version is a 4.y GA release it should create the rule because 4.y has no CPO firewall code",
+			version:  "4.23.0",
 			expected: true,
 		},
 		{
@@ -32,7 +57,7 @@ func TestShouldCreateFirewallRule(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "When version is newer than 5.1.0 it should not create the rule",
+			name:     "When version is newer than 5.0.0 it should not create the rule",
 			version:  "5.2.0",
 			expected: false,
 		},
@@ -52,9 +77,9 @@ func TestShouldCreateFirewallRule(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "When version is a prerelease of a later patch it should not create the rule",
+			name:     "When version is a prerelease of a later patch it should still create the rule",
 			version:  "5.1.1-ec.1",
-			expected: false,
+			expected: true,
 		},
 		{
 			name:     "When version carries build metadata it should compare equal to the release",
@@ -62,7 +87,7 @@ func TestShouldCreateFirewallRule(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:           "When the opt-out flag is set it should not create the rule for a pre-5.1 version",
+			name:           "When the opt-out flag is set it should not create the rule for a pre-GA version",
 			version:        "5.0.0-ec.6",
 			noFirewallRule: true,
 			expected:       false,
