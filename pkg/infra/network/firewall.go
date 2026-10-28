@@ -176,13 +176,13 @@ func desiredFirewall(infraID, networkSelfLink, networkType, nodePortRange string
 		Allowed:    desiredAllowed(networkType, nodePortRange),
 		SourceTags: []string{tag},
 		TargetTags: []string{tag},
-		// Disabled is a meaningful false: send it explicitly so a previously
-		// disabled rule is re-enabled.
+		// Disabled is a meaningful false: sending it explicitly keeps the created
+		// rule identical to CPO's desired state, so CPO adopts it unchanged.
 		Disabled: false,
-		// Every other (mutually exclusive) source/target selector must be sent
-		// even when empty, so CPO's repairing patch of a hand-edited rule clears
-		// CIDRs and service accounts instead of combining them with tags, which
-		// GCP rejects. These fields are omitempty, so ForceSendFields is required.
+		// The managed rule is strictly tag-scoped, so the mutually exclusive
+		// source/target selectors are sent empty on creation for the same reason:
+		// the rule matches CPO's desired state field for field. All of these are
+		// omitempty, so ForceSendFields is what puts them on the wire.
 		ForceSendFields: []string{
 			"Disabled",
 			"SourceRanges",
