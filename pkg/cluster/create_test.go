@@ -448,3 +448,38 @@ func TestBuildPayloadFromConfigs(t *testing.T) {
 		}
 	})
 }
+
+func TestNetworkCreateOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{name: "When the version is a pre-GA candidate it should be passed through", version: "5.0.0-ec.6"},
+		{name: "When the version is a 5.0.0+ GA release it should be passed through", version: "5.2.0"},
+		{name: "When the version is empty it should be passed through unchanged", version: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := networkCreateOptions(buildPayloadOptions{
+				projectID: "test-project",
+				region:    "us-central1",
+				infraID:   "test-infra",
+				version:   tt.version,
+			})
+
+			if opts.Version != tt.version {
+				t.Errorf("expected network options version %q, got %q", tt.version, opts.Version)
+			}
+			if opts.ProjectID != "test-project" {
+				t.Errorf("expected project ID %q, got %q", "test-project", opts.ProjectID)
+			}
+			if opts.Region != "us-central1" {
+				t.Errorf("expected region %q, got %q", "us-central1", opts.Region)
+			}
+			if opts.InfraID != "test-infra" {
+				t.Errorf("expected infra ID %q, got %q", "test-infra", opts.InfraID)
+			}
+		})
+	}
+}

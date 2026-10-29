@@ -79,6 +79,63 @@ func TestCreateOptionsValidateInputs(t *testing.T) {
 				VPCCidr:   "10.1.0.0/24",
 			},
 		},
+		{
+			name: "When version is a valid release it should pass validation",
+			opts: &CreateOptions{
+				InfraID:   "test-infra",
+				ProjectID: "test-project",
+				Region:    "us-central1",
+				Version:   "5.0.0-ec.6",
+			},
+		},
+		{
+			name: "When version is not semver it should return error",
+			opts: &CreateOptions{
+				InfraID:   "test-infra",
+				ProjectID: "test-project",
+				Region:    "us-central1",
+				Version:   "latest",
+			},
+			expectedError: "version must be a semantic version",
+		},
+		{
+			name: "When network type is supported it should pass validation",
+			opts: &CreateOptions{
+				InfraID:     "test-infra",
+				ProjectID:   "test-project",
+				Region:      "us-central1",
+				NetworkType: NetworkTypeOpenShiftSDN,
+			},
+		},
+		{
+			name: "When network type is unknown it should return error",
+			opts: &CreateOptions{
+				InfraID:     "test-infra",
+				ProjectID:   "test-project",
+				Region:      "us-central1",
+				NetworkType: "Calico",
+			},
+			expectedError: "network-type must be one of",
+		},
+		{
+			name: "When node port range is valid it should pass validation",
+			opts: &CreateOptions{
+				InfraID:       "test-infra",
+				ProjectID:     "test-project",
+				Region:        "us-central1",
+				NodePortRange: "30000-31000",
+			},
+		},
+		{
+			name: "When node port range is malformed it should return error",
+			opts: &CreateOptions{
+				InfraID:       "test-infra",
+				ProjectID:     "test-project",
+				Region:        "us-central1",
+				NodePortRange: "30000",
+			},
+			expectedError: "min-max form",
+		},
 	}
 
 	for _, tt := range tests {
@@ -124,7 +181,7 @@ func TestCreateWriteOutput(t *testing.T) {
 				SubnetCIDR:       "10.0.0.0/24",
 				RouterName:       "test-infra-router",
 				NATName:          "test-infra-nat",
-				FirewallRuleName: "test-infra-allow-kubelet",
+				FirewallRuleName: "test-infra-internal-cluster",
 			},
 			validateJSON: true,
 		},
@@ -242,4 +299,71 @@ func TestNewCreateCommand(t *testing.T) {
 			t.Error("expected output-file flag to be defined")
 		}
 	})
+
+	t.Run("When command is created it should have version flag", func(t *testing.T) {
+		if cmd.Flag("version") == nil {
+			t.Error("expected version flag to be defined")
+		}
+	})
+
+	t.Run("When command is created it should have network-type flag with default", func(t *testing.T) {
+		flag := cmd.Flag("network-type")
+		if flag == nil {
+			t.Error("expected network-type flag to be defined")
+		} else if flag.DefValue != DefaultNetworkType {
+			t.Errorf("expected network-type default %q, got %q", DefaultNetworkType, flag.DefValue)
+		}
+	})
+
+	t.Run("When command is created it should have node-port-range flag with default", func(t *testing.T) {
+		flag := cmd.Flag("node-port-range")
+		if flag == nil {
+			t.Error("expected node-port-range flag to be defined")
+		} else if flag.DefValue != DefaultNodePortRange {
+			t.Errorf("expected node-port-range default %q, got %q", DefaultNodePortRange, flag.DefValue)
+		}
+	})
+
+	t.Run("When command is created it should have no-firewall-rule flag", func(t *testing.T) {
+		if cmd.Flag("no-firewall-rule") == nil {
+			t.Error("expected no-firewall-rule flag to be defined")
+		}
+	})
+}
+
+// TestCreateOutputRetainsFirewallRuleName asserts the firewallRuleName field is
+// always serialized: downstream consumers parse this output, so the field must
+// not disappear when no rule was created.
+func TestCreateOutputRetainsFirewallRuleName(t *testing.T) {
+	tests := []struct {
+		name       string
+		ruleName   string
+		serialized string
+	}{
+		{
+			name:       "When a firewall rule was created it should serialize its name",
+			ruleName:   "test-infra-internal-cluster",
+			serialized: `"firewallRuleName":"test-infra-internal-cluster"`,
+		},
+		{
+			name:       "When no firewall rule was created it should still serialize the empty field",
+			ruleName:   "",
+			serialized: `"firewallRuleName":""`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(&CreateOutput{
+				InfraID:          "test-infra",
+				FirewallRuleName: tt.ruleName,
+			})
+			if err != nil {
+				t.Fatalf("failed to marshal output: %v", err)
+			}
+			if !strings.Contains(string(data), tt.serialized) {
+				t.Errorf("expected output %s to contain %s", data, tt.serialized)
+			}
+		})
+	}
 }

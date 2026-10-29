@@ -74,33 +74,33 @@ func (m *Manager) CreateNetwork(ctx context.Context) (*compute.Network, error) {
 	return m.client.GetNetwork(ctx, networkName)
 }
 
-func (m *Manager) CreateFirewallRule(ctx context.Context, networkSelfLink string) (*compute.Firewall, error) {
+// CreateFirewallRule creates the worker firewall rule in CPO's desired state,
+// including the ownership marker in its description, so the
+// control-plane-operator adopts the rule instead of reporting a conflict
+// (GCP-1221). networkType selects the Geneve overlay port; nodePortRange is the
+// cluster's service node port range.
+func (m *Manager) CreateFirewallRule(ctx context.Context, networkSelfLink, networkType, nodePortRange string) (*compute.Firewall, error) {
 	firewallName := m.formatFirewallName()
 	m.logger.Info("Creating firewall rule", "name", firewallName)
 
-	firewall := &compute.Firewall{
-		Name:        firewallName,
-		Network:     networkSelfLink,
-		Description: fmt.Sprintf("Allow kubelet API access for HyperShift cluster %s", m.infraID),
-		Allowed: []*compute.FirewallAllowed{
-			{
-				IPProtocol: "tcp",
-				Ports:      []string{"10250"},
-			},
-		},
-		Direction: "INGRESS",
-		// Allow traffic from the 10.0.0.0/8 range which covers:
-		// - Worker node subnet (e.g., 10.0.0.0/24)
-		// - Pod CIDR (e.g., 10.132.0.0/14)
-		// This enables kube-apiserver to reach kubelets via konnectivity and
-		// allows pods to scrape kubelet metrics.
-		SourceRanges: []string{"10.0.0.0/8"},
+	firewall := desiredFirewall(m.infraID, networkSelfLink, networkType, nodePortRange)
+	marker, err := ownershipMarker(m.infraID)
+	if err != nil {
+		return nil, err
 	}
+	firewall.Description = marker
 
 	if err := m.client.InsertFirewall(ctx, firewall); err != nil {
 		if isAlreadyExistsError(err) {
 			m.logger.Info("Firewall rule already exists", "name", firewallName)
-			return m.client.GetFirewall(ctx, firewallName)
+			existing, getErr := m.client.GetFirewall(ctx, firewallName)
+			if getErr != nil {
+				return nil, fmt.Errorf("failed to get existing firewall rule: %w", getErr)
+			}
+			if !hasOwnershipMarker(existing, m.infraID) {
+				m.logger.Info("WARNING: existing firewall rule is missing the control-plane-operator ownership marker; CPO will not adopt it", "name", firewallName)
+			}
+			return existing, nil
 		}
 		return nil, fmt.Errorf("failed to create firewall rule: %w", err)
 	}
@@ -273,19 +273,38 @@ func (m *Manager) DeleteSubnet(ctx context.Context) error {
 	return nil
 }
 
+// DeleteFirewallRule deletes the firewall rules a cluster may own: the managed
+// worker rule (<infra-id>-internal-cluster) and the legacy kubelet rule
+// (<infra-id>-allow-kubelet) created by older CLI versions. Both must be gone
+// before the VPC can be deleted. Not-found is treated as success so repeated
+// runs are safe.
 func (m *Manager) DeleteFirewallRule(ctx context.Context) error {
-	firewallName := m.formatFirewallName()
-	m.logger.Info("Deleting firewall rule", "name", firewallName)
+	for _, name := range m.firewallRuleNames() {
+		if err := m.deleteFirewallRule(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-	if err := m.client.DeleteFirewall(ctx, firewallName); err != nil {
+func (m *Manager) deleteFirewallRule(ctx context.Context, firewallName string) error {
+	return deleteFirewallRuleTolerant(ctx, firewallName, m.client.DeleteFirewall, m.logger)
+}
+
+// deleteFirewallRuleTolerant deletes one firewall rule, treating NotFound as
+// success so cleanup is idempotent.
+func deleteFirewallRuleTolerant(ctx context.Context, firewallName string, deleteFn func(context.Context, string) error, logger logr.Logger) error {
+	logger.Info("Deleting firewall rule", "name", firewallName)
+
+	if err := deleteFn(ctx, firewallName); err != nil {
 		if isNotFoundError(err) {
-			m.logger.Info("Firewall rule not found, skipping", "name", firewallName)
+			logger.Info("Firewall rule not found, skipping", "name", firewallName)
 			return nil
 		}
-		return fmt.Errorf("failed to delete firewall rule: %w", err)
+		return fmt.Errorf("failed to delete firewall rule %s: %w", firewallName, err)
 	}
 
-	m.logger.Info("Deleted firewall rule", "name", firewallName)
+	logger.Info("Deleted firewall rule", "name", firewallName)
 	return nil
 }
 
@@ -325,8 +344,23 @@ func (m *Manager) formatNATName() string {
 	return fmt.Sprintf("%s-nat", m.infraID)
 }
 
+// formatFirewallName returns the name of the managed worker firewall rule that
+// the control-plane-operator reconciles (GCP-1221).
 func (m *Manager) formatFirewallName() string {
+	return fmt.Sprintf("%s-internal-cluster", m.infraID)
+}
+
+// formatLegacyFirewallName returns the name of the kubelet firewall rule older
+// CLI versions created at setup time. It is only ever deleted now.
+func (m *Manager) formatLegacyFirewallName() string {
 	return fmt.Sprintf("%s-allow-kubelet", m.infraID)
+}
+
+// firewallRuleNames returns every firewall rule a cluster may own, in deletion
+// order. Both are removed before the VPC network, which GCP refuses to delete
+// while a rule still references it.
+func (m *Manager) firewallRuleNames() []string {
+	return []string{m.formatFirewallName(), m.formatLegacyFirewallName()}
 }
 
 // ============================================================================

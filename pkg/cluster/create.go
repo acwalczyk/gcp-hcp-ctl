@@ -306,6 +306,18 @@ func buildPayloadFromConfigs(iamConfigFile, networkConfigFile string, opts build
 	return assemblePayload(&iamConfig, &netConfig, opts)
 }
 
+// networkCreateOptions builds the network setup options for --setup-infra. The
+// requested cluster version decides who owns the worker firewall rule from
+// 5.0.0 GA onwards (GCP-1349).
+func networkCreateOptions(opts buildPayloadOptions) *network.CreateOptions {
+	return &network.CreateOptions{
+		ProjectID: opts.projectID,
+		Region:    opts.region,
+		InfraID:   opts.infraID,
+		Version:   opts.version,
+	}
+}
+
 func buildPayloadWithInfraSetup(ctx context.Context, w io.Writer, opts buildPayloadOptions) (*gcpv1.Cluster, error) {
 	if opts.projectID == "" {
 		return nil, fmt.Errorf("--project is required with --setup-infra (or set GCPHCPCTL_PROJECT or project in config)")
@@ -325,11 +337,7 @@ func buildPayloadWithInfraSetup(ctx context.Context, w io.Writer, opts buildPayl
 	fmt.Fprintf(w, "  IAM setup complete: %d service accounts created\n", len(iamOutput.ServiceAccounts))
 
 	fmt.Fprintln(w, ">>> Step 2: Setup network infrastructure")
-	networkOpts := &network.CreateOptions{
-		ProjectID: opts.projectID,
-		Region:    opts.region,
-		InfraID:   opts.infraID,
-	}
+	networkOpts := networkCreateOptions(opts)
 	networkOutput, err := networkOpts.CreateNetwork(ctx, logger)
 	if err != nil {
 		return nil, fmt.Errorf("network setup failed: %w", err)
