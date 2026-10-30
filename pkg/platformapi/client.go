@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/httpdebug"
 
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 
@@ -55,9 +56,10 @@ func NewClient(apiEndpoint, project string, tokenSource *auth.TokenSource) (*Cli
 	apiEndpoint = strings.TrimRight(apiEndpoint, "/")
 
 	cfg := clientRESTConfig(apiEndpoint)
-	cfg.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+	// Authentication stays outside tracing, so token failures are not sent attempts.
+	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
 		return &tokenTransport{base: rt, tokenSource: tokenSource}
-	}
+	})
 
 	rc, err := rest.RESTClientFor(cfg)
 	if err != nil {
@@ -69,8 +71,9 @@ func NewClient(apiEndpoint, project string, tokenSource *auth.TokenSource) (*Cli
 
 func clientRESTConfig(endpoint string) *rest.Config {
 	return &rest.Config{
-		Host:    endpoint,
-		APIPath: "/apis",
+		WrapTransport: httpdebug.Wrap,
+		Host:          endpoint,
+		APIPath:       "/apis",
 		ContentConfig: rest.ContentConfig{
 			GroupVersion:         &gcpv1.GroupVersion,
 			NegotiatedSerializer: codecs.WithoutConversion(),
