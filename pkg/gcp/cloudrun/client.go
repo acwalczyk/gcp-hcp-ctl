@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/httpdebug"
 	"google.golang.org/api/option"
 	runapi "google.golang.org/api/run/v2"
 )
@@ -80,7 +81,7 @@ type ToolDef struct {
 
 // ChatMessage represents a single message in the conversation history.
 type ChatMessage struct {
-	Role    string `json:"role"`    // "user" or "assistant"
+	Role    string `json:"role"` // "user" or "assistant"
 	Content string `json:"content"`
 }
 
@@ -333,7 +334,7 @@ func (c *Client) getHTTPClient(audience string) (*http.Client, error) {
 	ts := auth.NewTokenSource(audience)
 	client := &http.Client{
 		Transport: &cloudRunTransport{
-			base:         http.DefaultTransport,
+			base:         httpdebug.Wrap(nil),
 			tokenSource:  ts,
 			audienceHost: parsedURL.Host,
 		},
@@ -348,8 +349,10 @@ func (c *Client) getHTTPClient(audience string) (*http.Client, error) {
 // As a defence-in-depth measure, the token is only injected when the request
 // is made over HTTPS to the expected audience host.
 type cloudRunTransport struct {
-	base         http.RoundTripper
-	tokenSource  *auth.TokenSource
+	base        http.RoundTripper
+	tokenSource interface {
+		Token(context.Context) (string, string, error)
+	}
 	audienceHost string // expected hostname; token only sent to this host over HTTPS
 }
 

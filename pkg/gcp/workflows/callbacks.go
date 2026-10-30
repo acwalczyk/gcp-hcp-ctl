@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"golang.org/x/oauth2/google"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/httpdebug"
 )
 
 const callbacksAPIBase = "https://workflowexecutions.googleapis.com/v1"
@@ -30,10 +30,11 @@ type callbacksResponse struct {
 // ListCallbacks returns pending callbacks for an execution using the REST API.
 // executionName must be the full resource name with project number.
 func (c *Client) ListCallbacks(ctx context.Context, executionName string) ([]CallbackInfo, error) {
-	httpClient, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	httpClient, err := newWorkflowHTTPClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return nil, wrapAuthError("creating HTTP client for callbacks", err)
 	}
+	httpClient.Transport = httpdebug.Wrap(httpClient.Transport)
 
 	url := fmt.Sprintf("%s/%s/callbacks", callbacksAPIBase, executionName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -75,10 +76,11 @@ func (c *Client) ListCallbacks(ctx context.Context, executionName string) ([]Cal
 
 // TriggerCallback sends an HTTP request to a callback URL to resume a paused workflow.
 func (c *Client) TriggerCallback(ctx context.Context, callbackURL, method string, data map[string]interface{}) error {
-	httpClient, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	httpClient, err := newWorkflowHTTPClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return wrapAuthError("creating HTTP client for callback trigger", err)
 	}
+	httpClient.Transport = httpdebug.Wrap(httpClient.Transport)
 
 	var bodyReader io.Reader
 	if data != nil {

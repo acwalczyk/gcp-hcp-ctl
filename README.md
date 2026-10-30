@@ -139,6 +139,86 @@ retrying. For `cluster create --setup-infra`, inspect the cluster **and** the
 provisioned IAM/network resources before retrying or cleaning up; repeating
 setup blindly may provision another set of resources.
 
+### API tracing and verbosity
+
+Use kubectl-style numeric verbosity (`--v=N` or `-v=N`) for progressively more
+HTTP detail on stderr while normal command output stays on stdout:
+
+```bash
+gcphcpctl cluster list --v=6
+# Include the serialized JSON POST payload and successful response body:
+gcphcpctl rolebinding create test-rb --subject=user@example.com --platform-role=cluster-admin -v=8
+gcphcpctl nodepool list -v=6 -o json >nodepools.json 2>api-trace.log
+GCPHCPCTL_VERBOSITY=6 gcphcpctl cluster list
+gcphcpctl cluster list --v=0
+```
+
+The default is 0. You can also set `verbosity: 6` in the config file. Flags
+override `GCPHCPCTL_VERBOSITY`, which overrides the config file; explicit `0` at a
+higher priority disables tracing. Levels must be nonnegative integers. `-v6` and
+`-v 6` also work; bare `-v` requires a value. The standalone `gcphcpctl-ops` binary
+supports the same flag and setting.
+
+- Levels 0–5: no additional HTTP tracing.
+- Level 6: method, sanitized URL, response status, and elapsed time.
+- Level 7: also request headers, with credential-bearing and unknown header values
+  redacted.
+- Level 8: also response headers and supported request/response JSON bodies,
+  truncated to 1,024 bytes after redaction.
+- Level 9: also a redacted curl representation and DNS/connect/TLS/first-byte
+  timing details; the body output limit increases to 10,240 bytes.
+- Level 10 and above: the same details with no JSON body output truncation.
+
+These HTTP detail thresholds and output limits follow client-go. Tracing remains
+invocation-scoped rather than enabling global klog output; credentials are never
+intentionally unmasked at higher levels. The curl representation excludes the
+body, which is logged separately, and is not a credential-complete replay command.
+
+Each HTTP attempt gets a timestamped start line containing a request ID, method,
+and sanitized URL, followed by a matching completion line with numeric status
+and elapsed time. Application-level retries and redirects produce separate pairs;
+internal connection retries within Go's HTTP transport are not separately traced.
+Timing ends when response headers arrive, not when a streaming body finishes.
+At level 9+, `connect` sums completed connection attempts (including failed and
+overlapping attempts), so it can exceed elapsed wall time. `first_byte` measures
+from base-transport timing start to the first response byte, including a possible
+100 Continue response; it is not measured from upload completion. A timing with
+no observed callback is shown as zero.
+Failed transport attempts use fixed error labels, not raw error prose; a failure
+before token acquisition completes produces no API request trace.
+
+Body logging is limited to complete JSON (`application/json` and supported
+`+json` content types). Credential-like fields, Kubernetes Secret data, and
+recognized embedded credential strings/URLs are redacted before truncation.
+Request logging uses a replayable body snapshot and never consumes the body sent
+to the server. Response logging observes only bytes the caller reads, emitting a
+body entry at EOF or after a complete known-length read followed by Close; it
+never pre-reads or drains a response.
+
+Explicit omission markers explain non-replayable requests, incomplete/malformed
+JSON, encoded or unsupported bodies, SSE/NDJSON/watch streams, and non-success
+response bodies. Error response bodies remain omitted to preserve the CLI's safe
+error-normalization contract. At levels 8 and 9, JSON capture is limited to 16 MiB;
+larger bodies are omitted rather than redacting an incomplete prefix. Level 10
+removes this capture limit too and can consume substantial memory for large JSON
+responses. Recognized streams are not captured, and no response is forced to completion.
+
+Authorization, cookies, API keys, and unknown header values are masked. URL
+userinfo/fragments are omitted, workflow callback identifiers are redacted, and
+query values are redacted by default except narrowly validated metadata values.
+Redaction cannot identify every sensitive value in arbitrary application data:
+resource names, subjects/emails, and ordinary body fields remain visible. Treat
+high-verbosity logs as sensitive operational data and review them before sharing.
+Verbosity does not change normal command output, error labels, or exit status.
+
+Coverage is intentionally limited to the Platform API, endpoint discovery,
+Cloud Run diagnose/chat HTTP calls, direct Workflows REST calls (callbacks and
+PAM-tag checks), and the companion's PagerDuty HTTP calls. It does **not** trace
+Google SDK REST/gRPC clients (including Workflows execution/management, PAM,
+IAM, networking, and audit logging), credential/token exchanges, calls inside
+`gcloud` subprocesses, or API calls made remotely by Cloud Workflows or agents.
+An untraced command may therefore make API calls without producing trace lines.
+
 ### IAM Infrastructure for Hosted Clusters (`iam`)
 
 Create and destroy Workload Identity Federation (WIF) infrastructure for
@@ -334,6 +414,7 @@ gcphcpctl cluster create my-cluster --region us-central1 --env integration \
 | `--region` | `GCPHCPCTL_REGION` | `region` | GCP region |
 | `--environment` / `--env` | `GCPHCPCTL_ENVIRONMENT` | `environment` / `env` | Environment for endpoint discovery |
 | `--output` / `-o` | - | `output` | Output format: `text`, `json`, `yaml` |
+| `--v=N` / `-v=N` | `GCPHCPCTL_VERBOSITY` | `verbosity` | Nonnegative integer, default `0`; HTTP metadata at `6`, headers at `7`, JSON bodies at `8`, curl/timing at `9`, untruncated JSON at `10` |
 | `--api-endpoint` | `GCPHCPCTL_API_ENDPOINT` | `api_endpoint` | Explicit platform API endpoint; overrides discovery |
 | `--oidc-endpoint` | `GCPHCPCTL_OIDC_ENDPOINT` | `oidc_endpoint` | Explicit OIDC issuer base URL; overrides discovery |
 
@@ -372,6 +453,7 @@ pkg/
 ├── auth/             Authentication and token management
 ├── platformapi/      Platform API client
 ├── discovery/        Endpoint discovery manifest client and resolver
+├── httpdebug/        Invocation-scoped, redacted HTTP metadata tracing
 ├── regions/          List regions advertised by discovery
 ├── infra/
 │   ├── iam/          IAM infrastructure orchestration and CLI commands

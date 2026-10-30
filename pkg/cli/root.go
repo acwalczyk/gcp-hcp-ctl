@@ -2,11 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/cli/auth"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/cluster"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/httpdebug"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/infra/iam"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/infra/network"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/nodepool"
@@ -50,6 +52,7 @@ Configuration priority: CLI flags > environment variables > config file (~/.gcph
 	flags.StringVar(&cfg.Region, "region", "", "GCP region (env: GCPHCPCTL_REGION)")
 	flags.StringVar(&cfg.Environment, "environment", "", "Environment for endpoint discovery: integration, stage, production (or a discovery subdomain for dev/CI); alias: --env (env: GCPHCPCTL_ENVIRONMENT)")
 	flags.StringVarP(&cfg.Output, "output", "o", "text", "Output format: text, json, yaml")
+	flags.IntVarP(&cfg.Verbosity, "v", "v", 0, "HTTP tracing to stderr (0-5: no HTTP tracing; 6: metadata; 7: request headers; 8: bodies and response headers; 9: curl/timing; 10: untruncated supported bodies; env: GCPHCPCTL_VERBOSITY)")
 	flags.StringVar(&configPath, "config", "", "Config file path (default: ~/.gcphcpctl/config.yaml)")
 	flags.StringVar(&cfg.APIEndpoint, "api-endpoint", "", "Explicit platform API endpoint; overrides discovery (env: GCPHCPCTL_API_ENDPOINT)")
 	flags.StringVar(&cfg.OIDCEndpoint, "oidc-endpoint", "", "Explicit OIDC issuer base URL; overrides discovery (env: GCPHCPCTL_OIDC_ENDPOINT)")
@@ -90,9 +93,29 @@ func loadConfig(cmd *cobra.Command, configPath string, cfg *config.Config) error
 	if err != nil {
 		return err
 	}
+	environment, err := config.FromEnvironment(func(name string) string {
+		// An explicit flag wins even if the lower-priority environment is invalid.
+		if name == "GCPHCPCTL_VERBOSITY" && cmd.Flags().Changed("v") {
+			return ""
+		}
+		return os.Getenv(name)
+	})
+	if err != nil {
+		return err
+	}
 	// Publish the merged values: cobra's inherited flags and every subcommand read
 	// cfg after this returns.
-	*cfg = config.Resolve(*cfg, config.FromEnvironment(os.Getenv), *file, cmd.Flags().Changed("output"))
+	*cfg = config.Resolve(*cfg, environment, *file, cmd.Flags().Changed("output"), cmd.Flags().Changed("v"))
+	if cfg.Verbosity < 0 {
+		return fmt.Errorf("--v must be a nonnegative integer")
+	}
+	var traceOutput io.Writer
+	if cfg.Verbosity >= 6 {
+		traceOutput = cmd.ErrOrStderr()
+	}
+	// Initialize before any subcommand discovery or client setup. A nil writer
+	// explicitly disables a trace inherited from another invocation's context.
+	cmd.SetContext(httpdebug.WithTrace(cmd.Context(), traceOutput, cfg.Verbosity))
 	return nil
 }
 

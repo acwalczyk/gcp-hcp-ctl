@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/config"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/httpdebug"
 )
 
 // manifestSchemaVersion is the only manifest schema version this client
@@ -293,7 +294,8 @@ func NewHTTPFetcher(timeout time.Duration) *HTTPFetcher {
 		timeout = defaultFetchTimeout
 	}
 	return &HTTPFetcher{httpClient: &http.Client{
-		Timeout: timeout,
+		Transport: httpdebug.Wrap(nil),
+		Timeout:   timeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

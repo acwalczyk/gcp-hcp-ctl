@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/httpdebug"
 )
 
 const pagerdutyAPI = "https://api.pagerduty.com"
@@ -33,7 +35,7 @@ func NewPDClient() (*PDClient, error) {
 	}
 	return &PDClient{
 		token:      token,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		httpClient: &http.Client{Transport: httpdebug.Wrap(nil), Timeout: 15 * time.Second},
 	}, nil
 }
 

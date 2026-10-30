@@ -12,13 +12,18 @@ import (
 	"sync"
 	"time"
 
-	executions "cloud.google.com/go/workflows/executions/apiv1"
-	executionspb "cloud.google.com/go/workflows/executions/apiv1/executionspb"
 	wfapi "cloud.google.com/go/workflows/apiv1"
 	workflowspb "cloud.google.com/go/workflows/apiv1/workflowspb"
+	executions "cloud.google.com/go/workflows/executions/apiv1"
+	executionspb "cloud.google.com/go/workflows/executions/apiv1/executionspb"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/httpdebug"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 )
+
+// newWorkflowHTTPClient is separate from SDK clients so REST tests can use fake
+// token sources and local servers without consulting operator credentials.
+var newWorkflowHTTPClient = google.DefaultClient
 
 func wrapAuthError(action string, err error) error {
 	msg := err.Error()
@@ -443,10 +448,11 @@ func (c *Client) fetchPamGatedFlags(ctx context.Context, fullNames []string) []b
 		return flags
 	}
 
-	httpClient, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	httpClient, err := newWorkflowHTTPClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return flags // best-effort
 	}
+	httpClient.Transport = httpdebug.Wrap(httpClient.Transport)
 
 	var wg sync.WaitGroup
 	for i, name := range fullNames {
@@ -471,10 +477,11 @@ type tagBindingsResponse struct {
 // CheckPamGatedTag checks if a workflow has the pam-gated=true resource tag.
 // It uses the workflow short name and constructs the full resource path internally.
 func CheckPamGatedTag(ctx context.Context, project, region, workflowName string) bool {
-	httpClient, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	httpClient, err := newWorkflowHTTPClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return false
 	}
+	httpClient.Transport = httpdebug.Wrap(httpClient.Transport)
 	fullName := fmt.Sprintf("projects/%s/locations/%s/workflows/%s", project, region, workflowName)
 	return checkPamGatedTag(ctx, httpClient, region, fullName)
 }

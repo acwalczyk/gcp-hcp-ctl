@@ -1,13 +1,17 @@
 package cloudrun
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/httpdebug"
 )
 
 func TestParseResponse_Success(t *testing.T) {
@@ -113,8 +117,8 @@ func TestDiagnose_HTTPFlow(t *testing.T) {
 	defer server.Close()
 
 	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
+		Project:     "test-project",
+		Region:      "us-central1",
 		httpClients: map[string]*http.Client{server.URL: server.Client()},
 	}
 
@@ -138,8 +142,8 @@ func TestDiagnose_HTTPError(t *testing.T) {
 	defer server.Close()
 
 	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
+		Project:     "test-project",
+		Region:      "us-central1",
 		httpClients: map[string]*http.Client{server.URL: server.Client()},
 	}
 
@@ -150,7 +154,7 @@ func TestDiagnose_HTTPError(t *testing.T) {
 }
 
 func TestDiagnoseStream(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req DiagnoseRequest
 		json.NewDecoder(r.Body).Decode(&req)
 		if !req.Stream {
@@ -186,14 +190,10 @@ func TestDiagnoseStream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
-		httpClients: map[string]*http.Client{server.URL: server.Client()},
-	}
-
+	client := traceTestClient(t, server, nil)
+	var trace bytes.Buffer
 	var events []StreamEvent
-	resp, err := client.DiagnoseStream(t.Context(), server.URL, "test query", func(event StreamEvent) {
+	resp, err := client.DiagnoseStream(httpdebug.WithTrace(t.Context(), &trace, 6), server.URL, "test query", func(event StreamEvent) {
 		events = append(events, event)
 	})
 	if err != nil {
@@ -219,6 +219,9 @@ func TestDiagnoseStream(t *testing.T) {
 	if resp.Diagnosis.RootCause != "Pod is OOMKilled" {
 		t.Errorf("unexpected root_cause: %q", resp.Diagnosis.RootCause)
 	}
+	if strings.Count(trace.String(), " start ") != 1 || !strings.Contains(trace.String(), "status=200") || strings.Contains(trace.String(), "OOMKilled") {
+		t.Errorf("unexpected stream trace: %q", trace.String())
+	}
 }
 
 func TestDiagnoseStream_Error(t *testing.T) {
@@ -230,8 +233,8 @@ func TestDiagnoseStream_Error(t *testing.T) {
 	defer server.Close()
 
 	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
+		Project:     "test-project",
+		Region:      "us-central1",
 		httpClients: map[string]*http.Client{server.URL: server.Client()},
 	}
 
@@ -298,7 +301,11 @@ func TestDiagnose_RetryOn503ThenSuccess(t *testing.T) {
 		},
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil || string(body) != `{"query":"test cold start"}` || r.Header.Get("Authorization") != "Bearer fake-identity-token" {
+			t.Errorf("retry request changed: body=%q, error=%v", body, err)
+		}
 		n := attempts.Add(1)
 		if n <= 1 {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -310,13 +317,9 @@ func TestDiagnose_RetryOn503ThenSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
-		httpClients: map[string]*http.Client{server.URL: server.Client()},
-	}
-
-	resp, err := client.Diagnose(t.Context(), server.URL, "test cold start")
+	client := traceTestClient(t, server, nil)
+	var trace bytes.Buffer
+	resp, err := client.Diagnose(httpdebug.WithTrace(t.Context(), &trace, 6), server.URL, "test cold start")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -325,6 +328,14 @@ func TestDiagnose_RetryOn503ThenSuccess(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 2 {
 		t.Errorf("expected 2 attempts, got %d", got)
+	}
+	for _, entry := range []string{"request=1 start", "request=1 complete status=503", "request=2 start", "request=2 complete status=200"} {
+		if !strings.Contains(trace.String(), entry) {
+			t.Errorf("missing retry trace %q: %q", entry, trace.String())
+		}
+	}
+	if strings.Count(trace.String(), " start ") != 2 || strings.Count(trace.String(), " complete ") != 2 {
+		t.Errorf("want exactly one trace per attempt: %q", trace.String())
 	}
 }
 
@@ -339,8 +350,8 @@ func TestDiagnose_GivesUpAfterMaxRetries(t *testing.T) {
 	defer server.Close()
 
 	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
+		Project:     "test-project",
+		Region:      "us-central1",
 		httpClients: map[string]*http.Client{server.URL: server.Client()},
 	}
 
@@ -370,8 +381,8 @@ func TestDiagnose_NoRetryOnNonTransient(t *testing.T) {
 			defer server.Close()
 
 			client := &Client{
-				Project:    "test-project",
-				Region:     "us-central1",
+				Project:     "test-project",
+				Region:      "us-central1",
 				httpClients: map[string]*http.Client{server.URL: server.Client()},
 			}
 
@@ -387,7 +398,7 @@ func TestDiagnose_NoRetryOnNonTransient(t *testing.T) {
 }
 
 func TestChatStream_TextAndDone(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat" {
 			t.Errorf("expected path /chat, got %s", r.URL.Path)
 		}
@@ -404,14 +415,10 @@ func TestChatStream_TextAndDone(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
-		httpClients: map[string]*http.Client{server.URL: server.Client()},
-	}
-
+	client := traceTestClient(t, server, nil)
+	var trace bytes.Buffer
 	var events []StreamEvent
-	result, err := client.ChatStream(t.Context(), server.URL, ChatRequest{
+	result, err := client.ChatStream(httpdebug.WithTrace(t.Context(), &trace, 6), server.URL, ChatRequest{
 		History: []ChatMessage{{Role: "user", Content: "hello"}},
 	}, func(event StreamEvent) {
 		events = append(events, event)
@@ -429,6 +436,9 @@ func TestChatStream_TextAndDone(t *testing.T) {
 	if events[1].Event != "done" {
 		t.Errorf("unexpected second event: %+v", events[1])
 	}
+	if strings.Count(trace.String(), " start ") != 1 || !strings.Contains(trace.String(), "status=200") || strings.Contains(trace.String(), "Hi there!") {
+		t.Errorf("unexpected chat trace: %q", trace.String())
+	}
 	if result.PendingToolCall != nil {
 		t.Error("expected no pending tool call")
 	}
@@ -443,8 +453,8 @@ func TestChatStream_ToolCall(t *testing.T) {
 	defer server.Close()
 
 	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
+		Project:     "test-project",
+		Region:      "us-central1",
 		httpClients: map[string]*http.Client{server.URL: server.Client()},
 	}
 
@@ -495,8 +505,8 @@ func TestChatStream_ToolResult(t *testing.T) {
 	defer server.Close()
 
 	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
+		Project:     "test-project",
+		Region:      "us-central1",
 		httpClients: map[string]*http.Client{server.URL: server.Client()},
 	}
 
@@ -524,8 +534,8 @@ func TestChatStream_Error(t *testing.T) {
 	defer server.Close()
 
 	client := &Client{
-		Project:    "test-project",
-		Region:     "us-central1",
+		Project:     "test-project",
+		Region:      "us-central1",
 		httpClients: map[string]*http.Client{server.URL: server.Client()},
 	}
 
